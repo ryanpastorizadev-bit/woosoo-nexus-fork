@@ -18,6 +18,12 @@ Artisan::command('inspire', function () {
 Schedule::command('pulse:check')->everyMinute();
 // Schedule::command('horizon:snapshot')->everyFiveMinutes(); // Horizon not installed
 
+// Split-DB safe payment status reconciliation (POS -> local device_orders).
+// Replaces dependency on cross-server MySQL trigger updates.
+Schedule::command('pos:sync-payment-statuses')
+    ->everyMinute()
+    ->withoutOverlapping();
+
 // REMOVED 2026-04-07: ProcessOrderLogs schedule disabled for production hardening.
 // The job depends on `order_update_logs`, which does not exist in production DB.
 // Do NOT re-enable periodic dispatch without a migration + queue architecture plan.
