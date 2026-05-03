@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Actions\Order\CreateOrderedMenu;
 use App\Events\Order\OrderPrinted;
+use App\Events\Order\OrderStatusUpdated;
 use App\Events\PrintOrder;
 use App\Events\PrintRefill;
 use App\Http\Controllers\Controller;
@@ -359,10 +360,10 @@ class OrderApiController extends Controller
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'total' => $total,
-                    'notes' => $pos->note ?? null,
+                    'notes' => $pos->note ?? 'Refill',
                     'seat_number' => $pos->seat_number ?? 1,
                     'index' => $pos->index ?? 1,
-                    // Note: is_refill column removed - table doesn't have it
+                    'is_refill' => true,
                 ];
             }
 
@@ -398,6 +399,13 @@ class OrderApiController extends Controller
                                     // Reload to pick up printEvent relation
                                     $deviceOrder->refresh();
                                     PrintRefill::dispatch($deviceOrder, $posItems);
+
+                                    // Broadcast the complete updated order to admin.orders
+                                    // so the Refill Monitor receives all items immediately.
+                                    $freshOrder = $deviceOrder->fresh(['items.menu', 'device.table', 'table', 'serviceRequests']);
+                                    if ($freshOrder) {
+                                        OrderStatusUpdated::dispatch($freshOrder);
+                                    }
                                 });
                             } catch (\Throwable $e) {
                                 report($e);
@@ -427,7 +435,13 @@ class OrderApiController extends Controller
                 }
             }
 
-            $responseBody = ['success' => true, 'created' => $created];
+            $freshOrder = DeviceOrder::with(['items.menu', 'table'])->find($deviceOrder->id);
+
+            $responseBody = [
+                'success' => true,
+                'created' => $created,
+                'order' => $freshOrder ? $freshOrder->toArray() : null,
+            ];
 
             if ($responseCacheKey) {
                 Cache::put($responseCacheKey, [
