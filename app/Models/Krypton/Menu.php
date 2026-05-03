@@ -179,6 +179,23 @@ class Menu extends Model
         return null;
     }
 
+    /**
+     * Build a database-agnostic ORDER BY clause using CASE statement.
+     * Works with SQLite (testing) and MySQL (production).
+     * Preserves the defined code order while maintaining database portability.
+     *
+     * @param array $codeList The ordered list of codes (e.g., ['P1', 'P2', 'P3'])
+     * @return string The CASE WHEN clause for orderByRaw()
+     */
+    private static function buildCodeOrderClause(array $codeList): string
+    {
+        $cases = [];
+        foreach ($codeList as $index => $code) {
+            $cases[] = "WHEN receipt_name = '$code' THEN " . ($index + 1);
+        }
+        return "CASE " . implode(" ", $cases) . " ELSE " . (count($codeList) + 1) . " END";
+    }
+
     public static function getModifiers(int $id) {
         $codes = [
             46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
@@ -195,7 +212,7 @@ class Menu extends Model
         }
 
         $codeList = $codes[$id];
-        $orderExpression = "FIELD(receipt_name, '" . implode("','", $codeList) . "')";
+        $orderExpression = self::buildCodeOrderClause($codeList);
 
         return Menu::with(['image'])
             ->whereIn('receipt_name', $codeList)
@@ -224,12 +241,12 @@ class Menu extends Model
         }
 
         $codeList = $codes[$this->id];
-        $orderExpression = "FIELD(receipt_name, '" . implode("','", $codeList) . "')";
+        $orderExpression = self::buildCodeOrderClause($codeList);
 
         // Return modifier menus matching the receipt codes for this package.
         // Do not restrict by group name so the set meal modifiers include the
         // same menu rows/fields as the regular modifiers endpoint. Preserve
-        // the defined code order using FIELD(...).
+        // the defined code order using a database-agnostic CASE statement.
         return Menu::with(['image'])
             ->whereIn('receipt_name', $codeList)
             ->where('is_modifier_only', true)
