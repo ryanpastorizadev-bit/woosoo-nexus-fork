@@ -360,7 +360,7 @@ class OrderApiController extends Controller
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'total' => $total,
-                    'notes' => $pos->note ?? 'Refill',
+                    'notes' => isset($pos->note) && trim((string) $pos->note) !== '' ? $pos->note : 'Refill',
                     'seat_number' => $pos->seat_number ?? 1,
                     'index' => $pos->index ?? 1,
                     'is_refill' => true,
