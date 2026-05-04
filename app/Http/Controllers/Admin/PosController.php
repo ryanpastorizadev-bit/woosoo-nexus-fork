@@ -6,6 +6,7 @@ use App\Actions\Order\CreateOrder;
 use App\Actions\Order\CreateOrderCheck;
 use App\Actions\Order\CreateTableOrder;
 use App\Http\Controllers\Controller;
+use App\Services\AuditLogService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -230,6 +231,12 @@ class PosController extends Controller
             ];
         });
 
+        AuditLogService::adminAction($request, 'pos.order_added', (int) $request->user()->id, [
+            'terminal_id' => $terminalId,
+            'table_id'    => $tableId,
+            'order_id'    => $result['order_id'] ?? null,
+        ]);
+
         return response()->json([
             'success' => true,
             'message' => 'Order created in Krypton successfully.',
@@ -266,7 +273,7 @@ class PosController extends Controller
         ]);
     }
 
-    public function voidOrder(string $orderId): JsonResponse
+    public function voidOrder(string $orderId, Request $request): JsonResponse
     {
         $now = now()->toDateTimeString();
 
@@ -290,6 +297,10 @@ class PosController extends Controller
 
             $this->syncTablesForOrderClosure($orderId);
         });
+
+        AuditLogService::adminAction($request, 'pos.order_voided', (int) $request->user()->id, [
+            'order_id' => $orderId,
+        ]);
 
         return response()->json([
             'success' => true,
@@ -380,6 +391,12 @@ class PosController extends Controller
 
             $this->syncTablesForOrderClosure($orderId);
         }
+
+        AuditLogService::adminAction($request, 'pos.order_paid', (int) $request->user()->id, [
+            'order_id'   => $orderId,
+            'amount'     => $validated['amount'],
+            'is_settled' => (bool) $isSettled,
+        ]);
 
         return response()->json([
             'success' => true,

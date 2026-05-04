@@ -32,6 +32,8 @@ docker/certs/*.key
 !bootstrap/cache/.gitignore
 /certs
 /logs
+/storage/**
+!/storage/.gitignore
 vite.log
 
 # Workspace files
