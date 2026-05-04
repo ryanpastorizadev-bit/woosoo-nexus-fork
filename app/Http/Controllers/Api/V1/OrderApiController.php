@@ -360,7 +360,7 @@ class OrderApiController extends Controller
                     'subtotal' => $subtotal,
                     'tax' => $tax,
                     'total' => $total,
-                    'notes' => $pos->note ?? 'Refill',
+                    'notes' => isset($pos->note) && trim((string) $pos->note) !== '' ? $pos->note : 'Refill',
                     'seat_number' => $pos->seat_number ?? 1,
                     'index' => $pos->index ?? 1,
                     'is_refill' => true,
@@ -398,14 +398,19 @@ class OrderApiController extends Controller
                                     );
                                     // Reload to pick up printEvent relation
                                     $deviceOrder->refresh();
-                                    PrintRefill::dispatch($deviceOrder, $posItems);
 
-                                    // Broadcast the complete updated order to admin.orders
-                                    // so the Refill Monitor receives all items immediately.
+                                    // Queue broadcasts until the print-event transaction commits,
+                                    // so listeners never observe uncommitted state.
                                     $freshOrder = $deviceOrder->fresh(['items.menu', 'device.table', 'table', 'serviceRequests']);
-                                    if ($freshOrder) {
-                                        OrderStatusUpdated::dispatch($freshOrder);
-                                    }
+                                    DB::afterCommit(function () use ($deviceOrder, $posItems, $freshOrder) {
+                                        PrintRefill::dispatch($deviceOrder, $posItems);
+
+                                        // Broadcast the complete updated order to admin.orders
+                                        // so the Refill Monitor receives all items immediately.
+                                        if ($freshOrder) {
+                                            OrderStatusUpdated::dispatch($freshOrder);
+                                        }
+                                    });
                                 });
                             } catch (\Throwable $e) {
                                 report($e);
@@ -435,12 +440,13 @@ class OrderApiController extends Controller
                 }
             }
 
-            $freshOrder = DeviceOrder::with(['items.menu', 'table'])->find($deviceOrder->id);
+            // Fetch fresh order with relationships to return via DeviceOrderResource
+            $freshOrder = DeviceOrder::with(['items.menu', 'table', 'device'])->find($deviceOrder->id);
 
             $responseBody = [
                 'success' => true,
+                'order' => $freshOrder ? DeviceOrderResource::make($freshOrder) : null,
                 'created' => $created,
-                'order' => $freshOrder ? new DeviceOrderResource($freshOrder) : null,
             ];
 
             if ($responseCacheKey) {

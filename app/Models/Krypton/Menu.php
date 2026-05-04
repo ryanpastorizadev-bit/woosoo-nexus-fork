@@ -179,6 +179,14 @@ class Menu extends Model
         return null;
     }
 
+    /**
+     * Build a database-agnostic ORDER BY clause using CASE statement.
+     * Works with SQLite (testing) and MySQL (production).
+     * Preserves the defined code order while maintaining database portability.
+     *
+     * @param array $codeList The ordered list of codes (e.g., ['P1', 'P2', 'P3'])
+     * @return string The CASE WHEN clause for orderByRaw()
+     */
     public static function getModifiers(int $id) {
         $codes = [
             46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
