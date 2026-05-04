@@ -47,6 +47,7 @@ class OrderBroadcastPayload
                 'price' => $it->price,
                 'subtotal' => $it->subtotal,
                 'is_refill' => (bool) ($it->is_refill ?? false),
+                'notes' => $it->notes ?? null,
                 'type' => $it->type ?? null,
             ])->values()->all(),
             'serviceRequests' => $order->serviceRequests ?? [],
