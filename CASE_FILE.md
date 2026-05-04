@@ -217,3 +217,27 @@ flowchart TD
     F -- no --> I[Chunked scan + stale relay warnings]
     I --> J[Complete without requeue loop]
 ```
+
+### Addendum: Refill 500 on SQLite `FIELD()` incompatibility (May 3, 2026)
+
+- Symptom: refill feature tests returned 500 instead of 200 with `SQLSTATE[HY000]: no such function: FIELD` on `pos` sqlite `:memory:`.
+- Trigger path: `OrderApiController::refill()` response serialization (`$freshOrder->toArray()`) touched `Menu::$appends` → `computed_modifiers` accessor.
+- Root cause: `App\Models\Krypton\Menu` used MySQL-only `FIELD(receipt_name, ...)` ordering in both:
+  - `getModifiers(int $id)`
+  - `getComputedModifiersAttribute()`
+
+```mermaid
+flowchart TD
+    A[POST /api/order/{id}/refill] --> B[OrderApiController::refill]
+    B --> C[Build response payload with fresh order]
+    C --> D[DeviceOrder->toArray]
+    D --> E[Menu serialization]
+    E --> F[computed_modifiers accessor]
+    F --> G[orderByRaw FIELD(receipt_name,...)]
+    G --> H[SQLite pos::memory: FIELD missing]
+    H --> I[QueryException]
+    I --> J[HTTP 500]
+```
+
+- Fix: replaced MySQL-specific `FIELD(...)` ordering with portable deterministic `CASE WHEN receipt_name = ? THEN idx ... END` ordering helper in `Menu`.
+- Result intent: preserve modifier order contract in production MySQL while making test/runtime behavior deterministic across SQLite-based test environments.

@@ -195,13 +195,11 @@ class Menu extends Model
         }
 
         $codeList = $codes[$id];
-        $orderExpression = "FIELD(receipt_name, '" . implode("','", $codeList) . "')";
-
-        return Menu::with(['image'])
+        $query = Menu::with(['image'])
             ->whereIn('receipt_name', $codeList)
-            ->where('is_modifier_only', true)
-            ->orderByRaw($orderExpression)
-            ->get();
+            ->where('is_modifier_only', true);
+
+        return self::orderByReceiptCodeList($query, $codeList)->get();
     }
 
     public function getComputedModifiersAttribute()
@@ -224,17 +222,45 @@ class Menu extends Model
         }
 
         $codeList = $codes[$this->id];
-        $orderExpression = "FIELD(receipt_name, '" . implode("','", $codeList) . "')";
 
         // Return modifier menus matching the receipt codes for this package.
         // Do not restrict by group name so the set meal modifiers include the
         // same menu rows/fields as the regular modifiers endpoint. Preserve
-        // the defined code order using FIELD(...).
-        return Menu::with(['image'])
+        // the defined code order across both MySQL and SQLite.
+        $query = Menu::with(['image'])
             ->whereIn('receipt_name', $codeList)
-            ->where('is_modifier_only', true)
-            ->orderByRaw($orderExpression)
-            ->get();
+            ->where('is_modifier_only', true);
+
+        return self::orderByReceiptCodeList($query, $codeList)->get();
+    }
+
+    /**
+     * Apply deterministic ordering for a fixed receipt-code list.
+     *
+     * Uses a CASE expression for portability (SQLite test DB + MySQL runtime)
+     * while preserving the exact incoming codeList order.
+     *
+     * @param \\Illuminate\\Database\\Eloquent\\Builder $query
+     * @param array<int, string> $codeList
+     * @return \\Illuminate\\Database\\Eloquent\\Builder
+     */
+    protected static function orderByReceiptCodeList(Builder $query, array $codeList): Builder
+    {
+        if (empty($codeList)) {
+            return $query;
+        }
+
+        $caseSegments = [];
+        $bindings = [];
+
+        foreach (array_values($codeList) as $index => $code) {
+            $caseSegments[] = 'WHEN receipt_name = ? THEN '.$index;
+            $bindings[] = $code;
+        }
+
+        $caseSql = 'CASE '.implode(' ', $caseSegments).' ELSE '.count($codeList).' END';
+
+        return $query->orderByRaw($caseSql, $bindings);
     }
 
     /**

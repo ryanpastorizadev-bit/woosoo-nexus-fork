@@ -440,7 +440,7 @@ class OrderApiController extends Controller
             $responseBody = [
                 'success' => true,
                 'created' => $created,
-                'order' => $freshOrder ? $freshOrder->toArray() : null,
+                'order' => $freshOrder ? new DeviceOrderResource($freshOrder) : null,
             ];
 
             if ($responseCacheKey) {

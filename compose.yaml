@@ -136,7 +136,6 @@ services:
       NUXT_PUBLIC_REVERB_PORT: "443"
       NUXT_PUBLIC_REVERB_SCHEME: https
       NUXT_PUBLIC_REVERB_PATH: /app
-      # Backward compatibility for older tablet code that still reads Pusher-style names.
       MAIN_API_URL: https://${PUBLIC_HOST:-woosoo.local}
       NUXT_PUBLIC_PUSHER_KEY: ${REVERB_APP_KEY:-your_reverb_key_here}
       NUXT_PUBLIC_PUSHER_CLUSTER: mt1
