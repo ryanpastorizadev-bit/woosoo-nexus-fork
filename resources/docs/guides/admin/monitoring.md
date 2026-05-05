@@ -153,7 +153,7 @@ If monitoring shows a problem, you can fix it **before** guests encounter issues
 
 **If Critical:**
 1. Identify large files: `du -sh /* | sort -hr | head -10`
-2. Delete old backups: `rm -f /srv/woosoo/backups/woosoo-*.sql.gz` (keep recent ones)
+2. Delete old backups: `find /srv/woosoo/backups -name 'woosoo-*.sql.gz' -mtime +7 -delete` (removes files older than 7 days)
 3. Clear old logs: `sudo truncate -s 0 /var/log/woosoo/*.log`
 
 ---

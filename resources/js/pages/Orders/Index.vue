@@ -61,8 +61,9 @@ const echoStatus = ref<'connecting' | 'connected' | 'disconnected'>('connecting'
 let disconnectPollTimer: ReturnType<typeof setTimeout> | null = null
 
 watch(echoStatus, (newStatus, oldStatus) => {
-  if (newStatus === 'connected' && oldStatus !== 'connected') {
-    // Reconnected — reload to catch orders missed while disconnected
+  if (newStatus === 'connected' && oldStatus === 'disconnected') {
+    // Only reload when recovering from a real disconnection, not on initial connect.
+    // Using oldStatus === 'disconnected' prevents a spurious reload on first mount.
     router.reload({ only: ['orders', 'orderHistory'] })
     if (disconnectPollTimer !== null) {
       clearTimeout(disconnectPollTimer)

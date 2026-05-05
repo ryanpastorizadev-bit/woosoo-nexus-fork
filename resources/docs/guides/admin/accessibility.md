@@ -42,7 +42,7 @@ Accessibility features help:
 |-------|-------|----------|
 | **Small** | Default, compact layouts | Dashboard cards, tables |
 | **Medium** | Easier to read without zooming | Recommended for most staff |
-| **Large** | Significant vision challenges | Recommended for staff >50 years old or with vision impairment |
+| **Large** | Significant vision challenges | Recommended for users with low vision or difficulty reading standard-sized text |
 | **Extra Large** | Severe vision impairment | Works best with 1-2 columns instead of full width |
 
 **How to adjust:**
@@ -292,7 +292,7 @@ If this fails → accessibility is broken
 ### Screen Reader Test
 
 1. **Windows:** Install NVDA (free)
-2. **Mac:** Enable VoiceOver (System Preferences → Accessibility)
+2. **Mac:** Enable VoiceOver (System Settings → Accessibility) *(macOS Ventura and later; older versions: System Preferences → Accessibility)*
 3. Open Woosoo Nexus
 4. Navigate using screen reader commands
 5. All text should be readable, buttons should announce their purpose
@@ -315,7 +315,7 @@ If this fails → accessibility is broken
 
 ✅ **Test settings before deploying** — verify with the staff member who will use them.
 
-✅ **Document staff preferences** — keep a list of who has which settings (helps if they use different devices).
+✅ **Configure settings per device or role profile** — avoid maintaining a per-individual list of accessibility settings, as recording a person’s disability needs constitutes sensitive personal data. Use device-level or role-level configuration instead.
 
 ✅ **Review quarterly** — as staff age or change roles, accessibility needs may change.
 

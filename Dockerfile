@@ -26,12 +26,10 @@ WORKDIR /var/www/html
 COPY composer.json composer.lock ./
 RUN composer install --no-dev --optimize-autoloader --no-scripts --no-interaction
 
-# Install Node dependencies and build assets
-COPY package*.json vite.config.ts tailwind.config.js tsconfig.json ./
-COPY resources ./resources
-RUN npm ci && npm run build
-
+# Copy full source before building — VITE_* env vars and all config files must be
+# present at build time so the compiled JS bundle receives the correct values.
 COPY . .
+RUN npm ci && npm run build
 
 # PHP-FPM pool — listen on TCP 9000 for inter-container FastCGI (nginx → app)
 COPY docker/php/www.conf /usr/local/etc/php-fpm.d/www.conf

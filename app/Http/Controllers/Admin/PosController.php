@@ -130,11 +130,19 @@ class PosController extends Controller
 
         $orders = DB::connection('pos')
             ->table('orders as o')
-            ->leftJoin('order_checks as oc', 'oc.order_id', '=', 'o.id')
+            // Subquery restricts to the single latest check per order, preventing
+            // duplicate rows when an order has multiple order_check records.
+            ->leftJoin(
+                DB::raw('(SELECT order_id, MAX(id) AS max_id FROM order_checks GROUP BY order_id) AS oc_latest'),
+                'oc_latest.order_id', '=', 'o.id'
+            )
+            ->leftJoin('order_checks as oc', 'oc.id', '=', 'oc_latest.max_id')
             ->leftJoin('table_orders as tor', 'tor.order_id', '=', 'o.id')
             ->leftJoin('tables as t', 't.id', '=', 'tor.table_id')
             ->where('o.terminal_id', $terminalId)
             ->where('tor.table_id', $tableId)
+            ->where('o.is_open', 1)
+            ->where('o.is_voided', 0)
             ->groupBy(
                 'o.id',
                 'o.reference',
@@ -277,8 +285,10 @@ class PosController extends Controller
     {
         $now = now()->toDateTimeString();
 
-        DB::connection('pos')->transaction(function () use ($orderId, $now): void {
-            DB::connection('pos')
+        $affected = 0;
+
+        DB::connection('pos')->transaction(function () use ($orderId, $now, &$affected): void {
+            $affected = DB::connection('pos')
                 ->table('orders')
                 ->where('id', $orderId)
                 ->update([
@@ -287,16 +297,22 @@ class PosController extends Controller
                     'date_time_closed' => $now,
                 ]);
 
-            DB::connection('pos')
-                ->table('order_checks')
-                ->where('order_id', $orderId)
-                ->update([
-                    'is_voided' => 1,
-                    'date_time_voided' => $now,
-                ]);
+            if ($affected) {
+                DB::connection('pos')
+                    ->table('order_checks')
+                    ->where('order_id', $orderId)
+                    ->update([
+                        'is_voided' => 1,
+                        'date_time_voided' => $now,
+                    ]);
 
-            $this->syncTablesForOrderClosure($orderId);
+                $this->syncTablesForOrderClosure($orderId);
+            }
         });
+
+        if (! $affected) {
+            return response()->json(['success' => false, 'message' => 'Order not found.'], 404);
+        }
 
         AuditLogService::adminAction($request, 'pos.order_voided', (int) $request->user()->id, [
             'order_id' => $orderId,
@@ -321,9 +337,14 @@ class PosController extends Controller
             'expiration_date' => ['nullable', 'string', 'max:16'],
         ]);
 
-        $order = DB::connection('pos')->table('orders')->where('id', $orderId)->first();
+        $order = DB::connection('pos')
+            ->table('orders')
+            ->where('id', $orderId)
+            ->where('is_open', 1)
+            ->where('is_voided', 0)
+            ->first();
         if (! $order) {
-            return response()->json(['success' => false, 'message' => 'Order not found.'], 404);
+            return response()->json(['success' => false, 'message' => 'Order not found, already closed, or voided.'], 404);
         }
 
         $orderCheck = DB::connection('pos')
@@ -346,51 +367,62 @@ class PosController extends Controller
         $isSettled = $newPaid >= $totalAmount ? 1 : 0;
         $now = now()->toDateTimeString();
 
-        $paymentRows = DB::connection('pos')->select(
-            'CALL create_check_payment(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-            [
-                (int) $orderCheck->id,
-                (int) $validated['payment_type_id'],
-                null,
-                0,
-                null,
-                null,
-                $amount,
-                $change,
-                $validated['card_company'] ?? null,
-                $validated['card_number'] ?? null,
-                $validated['unique_code'] ?? null,
-                $validated['auth_code'] ?? null,
-                (float) ($validated['tip'] ?? 0),
-                false,
-                false,
-                $now,
-                (int) $ctx['employee_log_id'],
-                $validated['expiration_date'] ?? null,
-            ]
-        );
+        $paymentRows = null;
 
-        DB::connection('pos')
-            ->table('order_checks')
-            ->where('id', $orderCheck->id)
-            ->update([
-                'paid_amount' => $newPaid,
-                'change' => $change,
-                'is_settled' => $isSettled,
-                'date_time_closed' => $isSettled ? $now : null,
-            ]);
+        // Wrap stored procedure + follow-up ORM writes in a single transaction so a
+        // mid-sequence failure cannot leave partial payment state in the POS database.
+        // Note: if create_check_payment issues implicit DDL/DML commits internally, those
+        // cannot be rolled back by the outer transaction — audit that stored proc separately.
+        DB::connection('pos')->transaction(function () use (
+            $orderCheck, $validated, $amount, $change, $newPaid,
+            $isSettled, $now, $orderId, $ctx, &$paymentRows
+        ): void {
+            $paymentRows = DB::connection('pos')->select(
+                'CALL create_check_payment(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                    (int) $orderCheck->id,
+                    (int) $validated['payment_type_id'],
+                    null,
+                    0,
+                    null,
+                    null,
+                    $amount,
+                    $change,
+                    $validated['card_company'] ?? null,
+                    $validated['card_number'] ?? null,
+                    $validated['unique_code'] ?? null,
+                    $validated['auth_code'] ?? null,
+                    (float) ($validated['tip'] ?? 0),
+                    false,
+                    false,
+                    $now,
+                    (int) $ctx['employee_log_id'],
+                    $validated['expiration_date'] ?? null,
+                ]
+            );
 
-        if ($isSettled === 1) {
             DB::connection('pos')
-                ->table('orders')
-                ->where('id', $orderId)
+                ->table('order_checks')
+                ->where('id', $orderCheck->id)
                 ->update([
-                    'is_open' => 0,
-                    'date_time_closed' => $now,
+                    'paid_amount' => $newPaid,
+                    'change' => $change,
+                    'is_settled' => $isSettled,
+                    'date_time_closed' => $isSettled ? $now : null,
                 ]);
 
-            $this->syncTablesForOrderClosure($orderId);
-        }
+            if ($isSettled === 1) {
+                DB::connection('pos')
+                    ->table('orders')
+                    ->where('id', $orderId)
+                    ->update([
+                        'is_open' => 0,
+                        'date_time_closed' => $now,
+                    ]);
+
+                $this->syncTablesForOrderClosure($orderId);
+            }
+        });
 
         AuditLogService::adminAction($request, 'pos.order_paid', (int) $request->user()->id, [
             'order_id'   => $orderId,
@@ -462,7 +494,7 @@ class PosController extends Controller
                 ->where('id', $tableId)
                 ->update([
                     'is_locked' => $remainingOpenOrders > 0 ? 1 : 0,
-                    'is_available' => 1,
+                    // is_available intentionally excluded — manual offline/maintenance states must not be overwritten on order closure
                 ]);
         }
     }

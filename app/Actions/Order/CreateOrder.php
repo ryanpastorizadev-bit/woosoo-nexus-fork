@@ -65,7 +65,8 @@ class CreateOrder
             $currentEmployeeLogId = $attr['current_employee_log_id']; //$attr['current_employee_log_id'];
             $closeEmployeeLogId = $attr['close_employee_log_id']; // //$attr['close_employee_log_id'] ?? null;
             $serverEmployeeLogId = $attr['server_employee_log_id']; //$attr['server_employee_log_id'] ?? $startEmployeeLogId;
-            $reference = $attr['reference'] ?? null; // Can be null
+            // SP column is NOT NULL — null is never acceptable. Use '' when absent or explicitly null.
+            $reference = $attr['reference'] ?? '';
             $cashierEmployeeId = $attr['cashier_employee_id'] ?? 2;
             $terminalServiceId = $attr['terminal_service_id'];
             $isOnlineOrder = $attr['is_online_order']; // Default to false, can be set based on request

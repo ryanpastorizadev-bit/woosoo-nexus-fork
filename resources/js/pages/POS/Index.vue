@@ -263,8 +263,14 @@ const addOrderForTable = async () => {
 }
 
 const editOrder = async (order: PosOrder) => {
-    const nextGuestCount = window.prompt('Edit guest count:', String(order.guest_count ?? 1))
-    if (!nextGuestCount) {
+    const nextGuestCountRaw = window.prompt('Edit guest count:', String(order.guest_count ?? 1))
+    if (!nextGuestCountRaw) {
+        return
+    }
+
+    const nextGuestCount = parseInt(nextGuestCountRaw, 10)
+    if (!Number.isInteger(nextGuestCount) || nextGuestCount < 1) {
+        ordersError.value = 'Guest count must be a whole number ≥ 1.'
         return
     }
 
@@ -281,7 +287,7 @@ const editOrder = async (order: PosOrder) => {
                 Accept: 'application/json',
             },
             body: JSON.stringify({
-                guest_count: Number(nextGuestCount),
+                guest_count: nextGuestCount,
                 reference: nextReference || null,
             }),
         })
@@ -342,8 +348,20 @@ const payOrder = async (order: PosOrder) => {
         return
     }
 
+    const amount = parseFloat(amountPrompt)
+    if (!Number.isFinite(amount) || amount <= 0) {
+        ordersError.value = 'Payment amount must be a positive number.'
+        return
+    }
+
     const paymentTypePrompt = window.prompt('Payment type id (Cash=1, Credit=2, Debit=3, GCASH=4, PAYMAYA=5):', '1')
     if (!paymentTypePrompt) {
+        return
+    }
+
+    const paymentTypeId = parseInt(paymentTypePrompt, 10)
+    if (!Number.isInteger(paymentTypeId) || paymentTypeId < 1) {
+        ordersError.value = 'Invalid payment type ID.'
         return
     }
 
@@ -358,8 +376,8 @@ const payOrder = async (order: PosOrder) => {
                 Accept: 'application/json',
             },
             body: JSON.stringify({
-                amount: Number(amountPrompt),
-                payment_type_id: Number(paymentTypePrompt),
+                amount,
+                payment_type_id: paymentTypeId,
             }),
         })
 

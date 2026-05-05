@@ -269,8 +269,8 @@ tail -f /var/log/woosoo/reverb.log
 
 On Pi:
 ```bash
-sudo systemctl status laravel-reverb  # Check if running
-sudo supervisorctl start laravel-reverb  # Start it
+sudo supervisorctl status laravel-reverb  # Check if running
+sudo supervisorctl start laravel-reverb   # Start it
 sudo netstat -tulpn | grep 6001  # Verify port is open
 ```
 

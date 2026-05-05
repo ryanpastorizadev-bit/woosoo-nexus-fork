@@ -126,7 +126,7 @@ class DeviceOrderApiController extends Controller
             }
 
             $this->dispatchOrderCreated($order, $device?->id);
-            AuditLogService::orderStatusChanged($request, $order->id, 'NEW', OrderStatus::PENDING->value, $device->id);
+            AuditLogService::orderStatusChanged($request, $order->id, 'NEW', OrderStatus::CONFIRMED->value, $device->id);
 
             // H4 fix 2026-04-08: eager-load relationships so DeviceOrderResource
             // returns items and device in the 201 response (prevents silent empty-items body).

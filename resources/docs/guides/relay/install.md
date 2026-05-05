@@ -92,10 +92,21 @@ Also enable "Stay Awake" if the device has developer options:
 
 ## Troubleshooting Installation
 
+### Verify the APK Before Installing
+
+Before tapping "Install Anyway" on the Play Protect warning, confirm the file is authentic:
+
+1. On your PC, generate the SHA-256 hash of the downloaded APK:
+   - **Windows:** `certutil -hashfile woosoo-print-bridge-v1.x.x.apk SHA256`
+   - **Linux / Mac:** `sha256sum woosoo-print-bridge-v1.x.x.apk`
+2. Compare the output to the hash displayed on the **Admin → Devices → Download Relay** page.
+3. If the hashes match, proceed with installation.
+4. If they do **not** match — **do not install**. Contact your system administrator immediately.
+
 | Problem | Fix |
 |---------|-----|
 | "App not installed" error | Ensure enough storage space. Try redownloading the APK — it may be corrupted. |
-| "Blocked by Play Protect" | Tap **Install Anyway** — the app is not from the Play Store but is safe. |
+| "Blocked by Play Protect" | Verify the APK hash matches the official release (see above), then tap **Install Anyway**. |
 | App crashes on launch | Ensure the device runs Android 8.0+. Try restarting the device before opening. |
 | Registration code rejected | Codes expire after 10 minutes. Generate a new one from admin → Devices. |
 | App shows "Disconnected" after registration | Check WiFi — device and server must be on the same network. Verify the API URL is correct. |

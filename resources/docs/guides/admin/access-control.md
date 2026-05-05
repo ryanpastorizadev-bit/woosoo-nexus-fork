@@ -67,19 +67,19 @@ A permission list appears with checkboxes:
 
 | Permission | What It Allows |
 |-----------|---|
-| `order:view` | View all orders |
-| `order:create` | Create orders manually |
-| `order:edit` | Edit/void orders |
-| `menu:view` | View menu items |
-| `menu:edit` | Edit menu items and availability |
-| `user:view` | View user list |
-| `user:create` | Add new users |
-| `user:edit` | Edit user roles and details |
-| `device:view` | View registered devices |
-| `device:register` | Register new tablets/relays |
-| `report:view` | View reports |
-| `admin:settings` | Access admin settings |
-| `admin:access-control` | Manage roles & permissions (dangerous!) |
+| `view orders` | View all orders |
+| `create orders` | Create orders manually |
+| `update orders` | Edit/void orders |
+| `view menus` | View menu items |
+| `update menus` | Edit menu items and availability |
+| `view users` | View user list |
+| `create users` | Add new users |
+| `update users` | Edit user roles and details |
+| `view devices` | View registered devices |
+| `create devices` | Register new tablets/relays |
+| `view reports` | View reports |
+| `access dashboard` | Access admin settings |
+| `view permissions` | Manage roles & permissions (dangerous!) |
 
 ### Step 4: Save the Role
 

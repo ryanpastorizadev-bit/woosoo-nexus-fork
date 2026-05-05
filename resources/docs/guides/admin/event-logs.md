@@ -34,7 +34,7 @@ Each entry shows:
 |--------|---------|
 | **Timestamp** | Date and time the event occurred |
 | **User** | Who triggered the action (email or system) |
-| **Action** | What was done (created, updated, deleted, logged_in, failed) |
+| **Action** | What was done (e.g. `login`, `login_failed`, `logout`, `order:created`, `order:updated`, `device:offline`) |
 | **Resource** | What was acted upon (Order, Device, User, Menu, etc.) |
 | **Resource ID** | Specific ID of the item (e.g., order #12345) |
 | **Details** | Additional info (before/after values, error messages) |
