@@ -68,7 +68,7 @@ class KryptonContextService
 
                 $employeeLog = EmployeeLog::query()
                     ->when($session && $this->posColumnExists('employee_logs', 'session_id'), fn ($query) => $query->where('session_id', $session->id))
-                    ->when($terminal, fn ($query) => $query->where('terminal_id', $terminal->id))
+                        ->when($terminal && $this->posColumnExists('employee_logs', 'terminal_id'), fn ($query) => $query->where('terminal_id', $terminal->id))
                     ->whereNull('date_time_out')
                     ->orderByDesc('id')
                     ->first();
