@@ -73,6 +73,15 @@ class KryptonContextService
                     ->orderByDesc('id')
                     ->first();
 
+                    // Fallback: if no employee log found for current session, use any active log
+                    if (! $employeeLog) {
+                        $employeeLog = EmployeeLog::query()
+                            ->when($terminal && $this->posColumnExists('employee_logs', 'terminal_id'), fn ($query) => $query->where('terminal_id', $terminal->id))
+                            ->whereNull('date_time_out')
+                            ->orderByDesc('id')
+                            ->first();
+                    }
+
                 $cashTraySession = null;
                 if ($session) {
                     $cashTraySession = CashTraySession::query()
