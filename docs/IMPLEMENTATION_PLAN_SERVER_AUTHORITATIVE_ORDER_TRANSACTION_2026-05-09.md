@@ -39,7 +39,6 @@ Current system has order/refill blockers due to:
 **Refill:**
 ```json
 {
-  "order_id": 19583,
   "items": [
     { "menu_id": 10, "quantity": 2 },
     { "menu_id": 13, "quantity": 1 }
@@ -114,12 +113,23 @@ Schema::create('order_transactions', function (Blueprint $table) {
         'pending', 'planned', 'pos_written', 'local_written', 
         'events_dispatched', 'completed', 'recovery_required', 'failed'
     ])->default('pending');
+    $table->unsignedInteger('recovery_attempt_count')->default(0);
+    $table->unsignedInteger('max_recovery_attempts')->default(8);
+    $table->timestamp('next_recovery_at')->nullable();
+    $table->timestamp('last_recovery_attempt_at')->nullable();
+    $table->string('recovery_locked_by', 64)->nullable();
+    $table->timestamp('recovery_lock_expires_at')->nullable();
+    $table->string('last_recovery_error_code', 64)->nullable();
+    $table->text('last_recovery_error_message')->nullable();
+    $table->string('terminal_failure_reason', 64)->nullable();
+    $table->unsignedInteger('state_version')->default(0);
     $table->text('error_message')->nullable();
     $table->timestamps();
     
     $table->unique(['idempotency_key', 'device_id']);
     $table->index(['device_order_id', 'type']);
     $table->index(['status', 'created_at']);
+    $table->index(['next_recovery_at', 'status']);
 });
 ```
 
@@ -219,7 +229,7 @@ class DeviceOrderMirror
 | GET | `/api/device/menu-contract` | Returns packages + items with rules |
 | POST | `/api/device/orders/quote` | Get quote for initial order |
 | POST | `/api/device/orders/initial` | Commit initial order with quote_id |
-| POST | `/api/device/orders/{order}/refills` | Submit refill |
+| POST | `/api/device/orders/{orderId}/refills` | Submit refill |
 | GET | `/api/device/orders/active` | Get current active order |
 
 #### Request/Response Examples
@@ -306,6 +316,8 @@ Content-Type: application/json
 
 ```json
 {
+  "version": "menu-contract.v1.2026-05-09",
+  "etag": "\"menu-contract-v1-20260509\"",
   "packages": [
     {
       "menu_id": 46,
@@ -330,6 +342,12 @@ Content-Type: application/json
   ]
 }
 ```
+
+**Caching and invalidation requirements (must implement):**
+- Server returns `ETag` and contract `version` for `/api/device/menu-contract`
+- Client sends conditional request (`If-None-Match`) and uses `304 Not Modified`
+- Client cache key is version-scoped, not timestamp-only
+- `session.reset` broadcast must force menu-contract invalidation before next order flow
 
 ### 1.5 Validation Rules
 
@@ -358,7 +376,57 @@ Content-Type: application/json
 - [ ] Duplicate menu_ids normalized to quantity
 - [ ] Idempotency key required
 
-### 1.6 Backend Tests Required
+### 1.6 Idempotency and Conflict Policy (Required)
+
+- Every write endpoint requires `X-Idempotency-Key`:
+  - `POST /api/device/orders/initial`
+  - `POST /api/device/orders/{orderId}/refills`
+- Server persists idempotency in `order_transactions` (single source of truth)
+- Server computes `payload_hash` from normalized request payload
+- Same key + same hash = replay cached canonical response (`X-Idempotent-Replay: true`)
+- Same key + different hash = `409 Conflict` with explicit idempotency conflict code
+- Key scope: `(device_id, session_id, route family)` with unique guard on `device_id + idempotency_key`
+- TTL policy:
+  - Initial commit idempotency: 24 hours
+  - Refill idempotency: session lifetime or 2 hours, whichever is shorter
+- Refill retries for the same submit attempt must reuse the same key until terminal success/failure
+
+### 1.7 Recovery State Machine (Required)
+
+**Trigger ownership:**
+- Immediate synchronous path after detecting `pos_written` succeeded but local mirror/event dispatch failed
+- Scheduler sweep every minute for rows in `recovery_required` or stale `recovering`
+- Manual admin action (`force_recovery`) for operations
+
+**Retry policy:**
+- Max attempts: `8`
+- Backoff: `min(2^attempt * 15s, 15m)` + jitter (`0-20%`)
+- Attempts exhausted => terminal `failed` with `terminal_failure_reason = recovery_exhausted`
+
+**Allowed transitions only:**
+- `pending -> planned -> pos_written -> local_written -> events_dispatched -> completed`
+- `pos_written -> recovery_required`
+- `recovery_required -> recovering -> local_written`
+- `recovering -> recovery_required` (retryable failure, attempts remaining)
+- `recovering -> failed` (non-retryable or retries exhausted)
+
+**Loop guards:**
+- Monotonic state transitions only (reject invalid backward transitions)
+- Single active recovery lock (`recovery_locked_by`, `recovery_lock_expires_at`)
+- Compare-and-set using `state_version`
+- If POS IDs already exist, recovery must replay local/event work only (never POS rewrite)
+- Scheduler honors `next_recovery_at` to prevent hot retry loops
+
+**Required observability metrics:**
+- `recovery_required_total`
+- `recovery_attempt_total`
+- `recovery_success_total`
+- `recovery_failed_total`
+- `recovery_dead_letter_total`
+- `recovery_duration_seconds`
+- `recovery_stuck_count`
+
+### 1.8 Backend Tests Required
 
 Create test files:
 - `tests/Feature/Ordering/InitialOrderQuoteTest.php`
@@ -409,7 +477,6 @@ export type InitialOrderIntent = {
 }
 
 export type RefillIntent = {
-  order_id: number
   items: Array<{
     menu_id: number
     quantity: number
@@ -562,7 +629,6 @@ export function useOrderIntent() {
   }
   
   const buildRefillIntent = (
-    orderId: number,
     refillItems: SelectedItem[]
   ): RefillIntent => {
     // Same normalization logic
@@ -577,7 +643,6 @@ export function useOrderIntent() {
     }, [] as Array<{ menu_id: number; quantity: number }>)
     
     return {
-      order_id: orderId,
       items: merged,
     }
   }
@@ -593,7 +658,11 @@ export function useOrderIntent() {
 const IDEMPOTENCY_KEY_PREFIX = 'woosoo_idem_'
 
 export function generateIdempotencyKey(): string {
-  return `${IDEMPOTENCY_KEY_PREFIX}${crypto.randomUUID()}`
+  const randomUuid = typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+  return `${IDEMPOTENCY_KEY_PREFIX}${randomUuid}`
 }
 
 export function getInitialCommitKey(quoteId: string): string | null {
@@ -623,7 +692,7 @@ export function clearRefillKey(orderId: number, payloadHash: string): void {
 // Payload hash for comparison (simple JSON-stable hash)
 export function hashPayload(payload: object): string {
   const sorted = JSON.stringify(payload, Object.keys(payload).sort())
-  // Simple hash - replace with proper SHA-256 if needed
+  // Use SHA-256 in production implementation for server/client parity.
   let hash = 0
   for (let i = 0; i < sorted.length; i++) {
     const char = sorted.charCodeAt(i)

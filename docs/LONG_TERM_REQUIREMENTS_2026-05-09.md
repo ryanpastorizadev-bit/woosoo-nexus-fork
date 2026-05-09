@@ -165,7 +165,7 @@ tablet-ordering-pwa/types/generated/tablet-api.ts
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
 | GET | `/api/config` | Runtime config |
-| POST | `/api/devices/login` | Device auth |
+| GET | `/api/devices/login` | Device auth |
 | POST | `/api/devices/register` | Device registration |
 | POST | `/api/devices/refresh` | Token refresh |
 | GET | `/api/token/verify` | Token validation |
@@ -176,13 +176,25 @@ tablet-ordering-pwa/types/generated/tablet-api.ts
 | GET | `/api/v2/tablet/meat-categories` | Menu categories |
 | GET | `/api/v2/tablet/categories` | All categories |
 | GET | `/api/v2/tablet/categories/{slug}/menus` | Category menus |
-| POST | `/api/devices/create-order` | Create order |
+| GET | `/api/device/menu-contract` | Canonical package/item contract for tablet ordering |
+| POST | `/api/device/orders/quote` | Quote initial order (server totals) |
+| POST | `/api/device/orders/initial` | Commit initial order using quote + idempotency |
 | GET | `/api/device-order/by-order-id/{orderId}` | Order lookup |
-| POST | `/api/order/{orderId}/refill` | Submit refill |
+| POST | `/api/device/orders/{orderId}/refills` | Submit refill (idempotent) |
+| GET | `/api/device/orders/active` | Current active device order |
 | POST | `/api/order/{orderId}/print-refill` | Print refill |
 | POST | `/broadcasting/auth` | Reverb auth |
 
-### 4.3 Stale Endpoint Cleanup (PWA)
+### 4.3 Order Endpoint Canonicalization and Cache Rules
+
+- Canonical order family is `/api/device/orders/*`
+- Legacy aliases (`/api/devices/create-order`, `/api/order/{orderId}/refill`) are compatibility-only and must emit deprecation headers until removal
+- Refill order identity comes from URL path (`{orderId}`), not request body
+- `/api/device/menu-contract` must return `version` + `ETag`
+- PWA must perform conditional GET (`If-None-Match`) and respect `304`
+- Menu-contract cache must be invalidated on `session.reset` before next ordering flow
+
+### 4.4 Stale Endpoint Cleanup (PWA)
 
 **Remove or quarantine:**
 ```
@@ -192,7 +204,7 @@ tablet-ordering-pwa/types/generated/tablet-api.ts
 /api/menu/modifiers      # Deprecated
 ```
 
-### 4.4 Contract CI Requirements
+### 4.5 Contract CI Requirements
 
 **Nexus CI:**
 - [ ] Validate `tablet-api.v1.yaml` syntax
@@ -391,7 +403,7 @@ If existing Nexus endpoint requires pricing fields:
 
 ### 7.3 Idempotency Requirements
 
-**Every initial order mutation must include:**
+**Every order mutation must include:**
 ```http
 X-Idempotency-Key: <uuid>
 ```
@@ -402,6 +414,7 @@ X-Idempotency-Key: <uuid>
 - Same session
 - Same idempotency key
 - Same request hash
+- Same route family (`initial` vs `refill`)
 
 ### 7.4 Same Key, Different Payload = Reject
 
@@ -413,25 +426,56 @@ HTTP 409 Conflict
 }
 ```
 
-### 7.5 Idempotency Table Schema
+### 7.5 Idempotency Persistence Schema (Canonical)
+
+Persist idempotency in `order_transactions` (single source of truth), not a separate `idempotency_records` table.
 
 ```sql
-idempotency_records
+order_transactions
 - id
-- device_id
-- table_id
-- session_id
+- type (initial|refill)
 - idempotency_key (indexed)
-- request_hash
-- response_body
-- status_code
-- created_order_id
+- payload_hash
+- device_id
+- session_id
+- request_payload
+- order_plan
+- pos_result
+- status
 - expires_at
 - created_at
 - updated_at
 ```
 
-### 7.6 409 Conflict = Safe Resume Only
+### 7.6 Idempotency Response Rules and TTL
+
+- Same key + same request hash = replay cached response with `X-Idempotent-Replay: true`
+- Same key + different request hash = `409 Conflict` with explicit idempotency conflict error code
+- TTL policy:
+  - Initial commit keys retained for 24h
+  - Refill keys retained for session lifetime or 2h (shorter wins)
+- Refill retry for the same submit attempt must reuse the same idempotency key until terminal success/failure
+- Key scope is device+session+route family to prevent cross-surface collisions
+
+### 7.7 Recovery State Machine Requirements
+
+- `recovery_required` ownership is server-side only (worker + scheduler + manual admin trigger)
+- Retry policy is fixed: max `8` attempts, exponential backoff with jitter (`min(2^attempt * 15s, 15m) + 0-20%`)
+- Recovery must never rewrite POS rows if POS IDs already exist; only local mirror/event replay is allowed
+- Required loop guards:
+  - Monotonic status transitions only
+  - Single active recovery lock
+  - Compare-and-set/state-version guarded transitions
+  - Honor `next_recovery_at` before retry
+- Required tracking fields:
+  - `recovery_attempt_count`, `max_recovery_attempts`, `next_recovery_at`, `last_recovery_attempt_at`
+  - `recovery_locked_by`, `recovery_lock_expires_at`
+  - `last_recovery_error_code`, `last_recovery_error_message`, `terminal_failure_reason`, `state_version`
+- Required metrics:
+  - `recovery_required_total`, `recovery_attempt_total`, `recovery_success_total`, `recovery_failed_total`
+  - `recovery_dead_letter_total`, `recovery_duration_seconds`, `recovery_stuck_count`
+
+### 7.8 409 Conflict = Safe Resume Only
 
 `409` response must include resumable `order` object.
 
@@ -544,6 +588,7 @@ Hidden queued order can replay after:
 If network fails during submit:
 - [ ] Preserve the cart
 - [ ] Preserve same idempotency key (while session active)
+- [ ] Preserve same refill idempotency key for retried refill attempt (until terminal success/failure)
 - [ ] Show clear retry UI
 - [ ] Tell staff if connection does not recover
 - [ ] Do NOT silently queue in service worker
