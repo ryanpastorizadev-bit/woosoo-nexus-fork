@@ -2,8 +2,10 @@
 
 This contract defines the deployment boundary for tablet updates when `woosoo-nexus` and `tablet-ordering-pwa` are deployed together.
 
-Matching Tablet PWA contract:  
-`https://github.com/tech-artificer/tablet-ordering-pwa/blob/staging/docs/deployment/tablet-update-contract.md`
+Matching Tablet PWA contract:
+
+- Repository/path: `tech-artificer/tablet-ordering-pwa` → `docs/deployment/tablet-update-contract.md`
+- Use the **same branch selected for tablet deploy** when reviewing that contract.
 
 Both repositories must keep these rules aligned.
 
@@ -34,7 +36,9 @@ Contract:
 
 - The tablet image is built from the **sibling** `../tablet-ordering-pwa` repository.
 - Build context must not be switched to Nexus local folders.
-- Production Dockerfile target becomes **`Dockerfile.prod`** once the tablet update flow is proven and both repos are updated in lockstep.
+- Production Dockerfile target becomes **`Dockerfile.prod`** only after both conditions are met:
+  - 14 consecutive days of successful tablet deployments with no rollback caused by asset/cache mismatch.
+  - The matching Tablet PWA contract is updated in the same change window and reviewed with Nexus.
 
 ---
 
@@ -91,7 +95,9 @@ Deployment must stop immediately (no partial proceed) if any condition below is 
 - Tablet build context is not `../tablet-ordering-pwa`.
 - Required runtime files are missing after build.
 - New release fingerprint cannot be confirmed.
-- Cache invalidation/update behavior for `runtime-config.js`/`sw.js`/`manifest.webmanifest` cannot be verified via HTTP response headers and browser DevTools Network inspection (or equivalent automated preflight checks).
+- Cache invalidation/update behavior for `runtime-config.js`/`sw.js`/`manifest.webmanifest` cannot be verified via:
+  - HTTP headers showing revalidation policy (for example: `Cache-Control: no-cache`, `max-age=0`, or `must-revalidate`), and
+  - Browser DevTools Network inspection (or equivalent automated preflight checks) confirming fresh fetch on rollout.
 - Matching Tablet PWA contract is missing or conflicts with this document.
 
 Resume only after the blocking condition is fixed and preflight is re-run.
