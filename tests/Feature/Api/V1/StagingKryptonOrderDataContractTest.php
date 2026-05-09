@@ -36,13 +36,7 @@ class StagingKryptonOrderDataContractTest extends TestCase
         $this->seedKryptonContextRows();
         $this->seedOrderSupportRows();
 
-        $device = Device::create([
-            'id' => 199,
-            'name' => 'Staging Audit Tablet T1',
-            'ip_address' => '192.168.100.51',
-            'is_active' => true,
-            'table_id' => 19,
-        ]);
+        $device = $this->makeStagingDevice();
 
         $deviceOrder = app(OrderService::class)->processOrder($device, [
             'guest_count' => 1,
@@ -76,13 +70,7 @@ class StagingKryptonOrderDataContractTest extends TestCase
         $this->seedKryptonContextRows();
         $this->seedOrderSupportRows();
 
-        $device = Device::create([
-            'id' => 199,
-            'name' => 'Staging Audit Tablet T1',
-            'ip_address' => '192.168.100.51',
-            'is_active' => true,
-            'table_id' => 19,
-        ]);
+        $device = $this->makeStagingDevice();
 
         DeviceOrder::create([
             'device_id' => $device->id,
@@ -179,13 +167,7 @@ class StagingKryptonOrderDataContractTest extends TestCase
             ['krypton_menu_id' => 13, 'sort_order' => 2],
         ]);
 
-        $device = Device::create([
-            'id' => 199,
-            'name' => 'Staging Audit Tablet T1',
-            'ip_address' => '192.168.100.51',
-            'is_active' => true,
-            'table_id' => 19,
-        ]);
+        $device = $this->makeStagingDevice();
 
         $deviceOrder = app(OrderService::class)->processOrder($device, [
             'guest_count' => 2,
@@ -248,13 +230,7 @@ class StagingKryptonOrderDataContractTest extends TestCase
             'sort_order' => 1,
         ]);
 
-        $device = Device::create([
-            'id' => 199,
-            'name' => 'Staging Audit Tablet T1',
-            'ip_address' => '192.168.100.51',
-            'is_active' => true,
-            'table_id' => 19,
-        ]);
+        $device = $this->makeStagingDevice();
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('Modifier 13 is not allowed for package 46');
@@ -277,6 +253,17 @@ class StagingKryptonOrderDataContractTest extends TestCase
                     ],
                 ],
             ],
+        ]);
+    }
+
+    private function makeStagingDevice(): Device
+    {
+        return Device::create([
+            'id'         => 199,
+            'name'       => 'Staging Audit Tablet T1',
+            'ip_address' => '192.168.100.51',
+            'is_active'  => true,
+            'table_id'   => 19,
         ]);
     }
 

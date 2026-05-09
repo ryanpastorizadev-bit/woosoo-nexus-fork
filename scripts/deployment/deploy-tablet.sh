@@ -82,6 +82,15 @@ export TABLET_BUILD_TABLET_BRANCH="$tablet_branch"
 export TABLET_BUILD_TABLET_COMMIT="$tablet_commit"
 export TABLET_BUILD_FINGERPRINT="${nexus_commit:0:12}-${tablet_commit:0:12}"
 
+if [[ ! -f "$verify_script" ]]; then
+  echo "ERROR: verify script not found: ${verify_script}" >&2
+  exit 1
+fi
+if [[ ! -x "$verify_script" ]]; then
+  echo "ERROR: verify script is not executable: ${verify_script}" >&2
+  echo "Run: chmod +x ${verify_script}" >&2
+  exit 1
+fi
 "$verify_script"
 
 echo "Building and deploying tablet-pwa with fingerprint ${TABLET_BUILD_FINGERPRINT}..."
