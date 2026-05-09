@@ -40,7 +40,7 @@ Contract:
 
 ## 3) Runtime files and cache policy expectations
 
-The deployed tablet origin (for example `https://woosoo.local:4443`) must expose and keep coherent versions of:
+The deployed tablet origin (for example `https://woosoo.local:4443`) must expose and keep matching files from the same build fingerprint (atomically switched release) for:
 
 - `runtime-config.js`
 - `sw.js`
@@ -91,7 +91,7 @@ Deployment must stop immediately (no partial proceed) if any condition below is 
 - Tablet build context is not `../tablet-ordering-pwa`.
 - Required runtime files are missing after build.
 - New release fingerprint cannot be confirmed.
-- Cache invalidation/update behavior for `runtime-config.js`/`sw.js`/`manifest.webmanifest` cannot be verified.
+- Cache invalidation/update behavior for `runtime-config.js`/`sw.js`/`manifest.webmanifest` cannot be verified via HTTP response headers and browser DevTools Network inspection (or equivalent automated preflight checks).
 - Matching Tablet PWA contract is missing or conflicts with this document.
 
 Resume only after the blocking condition is fixed and preflight is re-run.
