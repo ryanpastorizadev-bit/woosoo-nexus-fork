@@ -56,11 +56,9 @@ if [[ "$ALLOW_DIRTY" != "1" ]]; then
   fi
 fi
 
-export TABLET_BUILD_NEXUS_BRANCH="${TABLET_BUILD_NEXUS_BRANCH:-$nexus_branch}"
-export TABLET_BUILD_NEXUS_COMMIT="${TABLET_BUILD_NEXUS_COMMIT:-$nexus_commit}"
-export TABLET_BUILD_TABLET_BRANCH="${TABLET_BUILD_TABLET_BRANCH:-$tablet_branch}"
-export TABLET_BUILD_TABLET_COMMIT="${TABLET_BUILD_TABLET_COMMIT:-$tablet_commit}"
-export TABLET_BUILD_FINGERPRINT="${TABLET_BUILD_FINGERPRINT:-${TABLET_BUILD_NEXUS_COMMIT:0:12}-${TABLET_BUILD_TABLET_COMMIT:0:12}}"
+export TABLET_BUILD_SHA="${TABLET_BUILD_SHA:-$tablet_commit}"
+export TABLET_BUILD_BRANCH="${TABLET_BUILD_BRANCH:-$tablet_branch}"
+export TABLET_BUILD_TIME="${TABLET_BUILD_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 
 compose_config="$("${compose_cmd[@]}" config)"
 
@@ -86,7 +84,7 @@ if [[ -z "$resolved_tablet_service" ]]; then
 fi
 
 dockerfile_line="$(printf '%s\n' "$resolved_tablet_service" | awk -F': ' '/^[[:space:]]+dockerfile:/ {print $2; exit}')"
-resolved_dockerfile="${dockerfile_line:-<unknown>}"
+resolved_dockerfile="${dockerfile_line:-Dockerfile.prod}"
 
 resolved_build_args="$(
   printf '%s\n' "$resolved_tablet_service" | awk '
@@ -113,20 +111,19 @@ resolved_runtime_env="$(
 echo "=== Tablet Deploy Context Preflight ==="
 echo "Nexus repo:    ${NEXUS_DIR}"
 echo "Nexus branch:  ${nexus_branch}"
-echo "Nexus commit:  ${nexus_commit}"
+echo "Nexus commit:  ${nexus_commit:0:12}"
 echo "Nexus status:  ${nexus_status}"
 echo
 echo "Tablet repo:   ${TABLET_DIR}"
 echo "Tablet branch: ${tablet_branch}"
-echo "Tablet commit: ${tablet_commit}"
+echo "Tablet commit: ${tablet_commit:0:12}"
 echo "Tablet status: ${tablet_status}"
 echo
-echo "Build fingerprint args:"
-echo "  TABLET_BUILD_NEXUS_BRANCH=${TABLET_BUILD_NEXUS_BRANCH}"
-echo "  TABLET_BUILD_NEXUS_COMMIT=${TABLET_BUILD_NEXUS_COMMIT}"
-echo "  TABLET_BUILD_TABLET_BRANCH=${TABLET_BUILD_TABLET_BRANCH}"
-echo "  TABLET_BUILD_TABLET_COMMIT=${TABLET_BUILD_TABLET_COMMIT}"
-echo "  TABLET_BUILD_FINGERPRINT=${TABLET_BUILD_FINGERPRINT}"
+echo "Build fingerprint:"
+echo "  TABLET_BUILD_SHA=${TABLET_BUILD_SHA:0:12}"
+echo "  TABLET_BUILD_BRANCH=${TABLET_BUILD_BRANCH}"
+echo "  TABLET_BUILD_TIME=${TABLET_BUILD_TIME}"
+echo "  TABLET_DOCKERFILE=${resolved_dockerfile}"
 echo
 
 echo "Resolved tablet Dockerfile: ${resolved_dockerfile}"
@@ -137,6 +134,7 @@ else
   echo "  <none>"
 fi
 
+echo
 echo "Resolved tablet runtime env:"
 if [[ -n "$resolved_runtime_env" ]]; then
   printf '%s\n' "$resolved_runtime_env"
@@ -144,5 +142,10 @@ else
   echo "  <none>"
 fi
 
-echo "Resolved compose service (tablet-pwa):"
+echo
+echo "=== Debug: Raw compose tablet-pwa service ==="
 printf '%s\n' "$resolved_tablet_service"
+
+echo
+echo "=== Debug: PUBLIC_HOST ==="
+grep -E '^PUBLIC_HOST=' "$NEXUS_DIR/.env" "$NEXUS_DIR/.env.docker" 2>/dev/null || echo "  Not set in .env or .env.docker"
