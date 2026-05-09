@@ -42,6 +42,7 @@ jobs:
       - name: Copy env and keygen
         run: |
           cp .env.example .env
+          cp .env.docker.example .env.docker
           php artisan key:generate
 
       - name: Install Node deps
