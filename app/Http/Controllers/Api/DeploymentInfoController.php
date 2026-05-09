@@ -9,13 +9,13 @@ class DeploymentInfoController
 {
     public function __invoke(): JsonResponse
     {
-        $buildSha = trim((string) env('BUILD_SHA'));
-        $buildTime = trim((string) env('BUILD_TIME'));
+        $buildSha = trim((string) config('app.build_sha', ''));
+        $buildTime = trim((string) config('app.build_time', ''));
 
         return response()->json([
             'app_name' => config('app.name'),
             'app_environment' => app()->environment(),
-            'app_version' => config('app.version', env('APP_VERSION', '1.0.0')),
+            'app_version' => config('app.version'),
             'public_host' => PublicOrigin::host(),
             'reverb_host' => config('broadcasting.connections.reverb.options.host'),
             'build_sha' => $buildSha !== '' ? $buildSha : null,
