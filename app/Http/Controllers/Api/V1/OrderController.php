@@ -173,8 +173,9 @@ class OrderController extends Controller
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
 
+        $targetStatus = OrderStatus::from($request->input('status'));
+
         try {
-            $targetStatus = OrderStatus::from($request->input('status'));
             DB::transaction(function () use ($order, $targetStatus) {
                 $fresh = DeviceOrder::lockForUpdate()->findOrFail($order->id);
                 if ($fresh->status === $targetStatus) {
@@ -186,7 +187,9 @@ class OrderController extends Controller
             // Reload to get the persisted state for the response
             $order->refresh();
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => 'Invalid status transition', 'error' => $e->getMessage()], 422);
+            Log::error('Order status transition failed', ['order_id' => $order->id, 'target_status' => $targetStatus->value, 'error' => $e->getMessage()]);
+
+            return response()->json(['success' => false, 'message' => 'Unable to change order status'], 422);
         }
 
         return response()->json(['success' => true, 'data' => [ 'id' => $order->id, 'status' => $order->status ]]);
