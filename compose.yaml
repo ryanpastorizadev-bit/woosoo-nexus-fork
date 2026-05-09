@@ -1,3 +1,10 @@
+# NOTE: This Compose file uses source bind-mounts (.:/var/www/html) for
+# app, queue, scheduler, reverb, and nginx. This is suitable for dev and staging
+# deployments where source code is present on the host.
+# For fully immutable production deployments, remove the bind-mounts and rely
+# only on built image contents + the named 'storage_data' volume.
+# See docs/DOCKER_DEPLOYMENT.md for production hardening guidance.
+
 services:
 
   # ── Reverse proxy + TLS termination ──────────────────────────────────
@@ -30,7 +37,7 @@ services:
     environment:
       REVERB_BROADCAST_HOST: ${PUBLIC_HOST:-woosoo.local}
     volumes:
-      - .:/var/www/html
+      - .:/var/www/html  # dev/staging: bind-mount; remove for immutable production image
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini:ro
       - storage_data:/var/www/html/storage
     depends_on:
