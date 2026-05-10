@@ -3,6 +3,22 @@
 # You are in: E:\Projects\woosoo-integrated-stack\woosoo-nexus
 
 # ============================================================================
+# BEFORE YOU START: substitute the placeholders below with real values
+# ============================================================================
+# <DB_HOST>     - IP or hostname of the Krypton MySQL server   (e.g. 192.168.x.y)
+# <DB_PORT>     - MySQL port                                    (e.g. 3308)
+# <DB_USER>     - MySQL username                                (e.g. woosoo_pos)
+# <DB_PASSWORD> - MySQL password  (never commit the real value to source control)
+#
+# PowerShell convenience: set once, use everywhere:
+#   $env:DB_HOST     = "<DB_HOST>"
+#   $env:DB_PORT     = "<DB_PORT>"
+#   $env:DB_USER     = "<DB_USER>"
+#   $env:DB_PASSWORD = "<DB_PASSWORD>"
+# Then replace the placeholder tokens in the commands below with:
+#   $env:DB_HOST, $env:DB_PORT, $env:DB_USER, $env:DB_PASSWORD
+
+# ============================================================================
 # STEP 1: BUILD DOCKER IMAGE
 # ============================================================================
 # Copy this entire line and paste in PowerShell, press Enter:
@@ -32,7 +48,7 @@ docker-compose ps
 # ============================================================================
 # Copy this and paste:
 
-mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo < krypton_woosoo_bi_views.sql
+mysql -h <DB_HOST> -P <DB_PORT> -u <DB_USER> -p<DB_PASSWORD> krypton_woosoo < krypton_woosoo_bi_views.sql
 
 # Wait for completion (no output = success)
 
@@ -42,7 +58,7 @@ mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo < krypton
 # ============================================================================
 # Copy this and paste:
 
-mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo -e "SHOW VIEWS LIKE 'bi_%';"
+mysql -h <DB_HOST> -P <DB_PORT> -u <DB_USER> -p<DB_PASSWORD> krypton_woosoo -e "SHOW VIEWS LIKE 'bi_%';"
 
 # You should see 5+ rows:
 # bi_krypton_woosoo_order_fusion
@@ -57,7 +73,7 @@ mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo -e "SHOW 
 # ============================================================================
 # Copy this entire line as ONE BLOCK and paste in PowerShell:
 
-docker exec bi-processor python /app/bi_processor.py --dialect mysql --host 192.168.100.7 --user woosoo_pos --password "password" --database krypton_woosoo --refresh --report --output /app/reports/drift_report.json
+docker exec bi-processor python /app/bi_processor.py --dialect mysql --host <DB_HOST> --user <DB_USER> --password "<DB_PASSWORD>" --database krypton_woosoo --refresh --report --output /app/reports/drift_report.json
 
 # Wait for completion
 # Time: ~10-30 seconds
@@ -84,11 +100,11 @@ notepad reports\drift_report.json
 # ============================================================================
 # Check order 19643:
 
-mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo -e "SELECT krypton_order_id, woosoo_order_id, crosswalk_status, amount_reconciliation FROM bi_krypton_woosoo_order_fusion WHERE krypton_order_id = 19643;"
+mysql -h <DB_HOST> -P <DB_PORT> -u <DB_USER> -p<DB_PASSWORD> krypton_woosoo -e "SELECT krypton_order_id, woosoo_order_id, crosswalk_status, amount_reconciliation FROM bi_krypton_woosoo_order_fusion WHERE krypton_order_id = 19643;"
 
 # Find HIGH severity drift:
 
-mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword krypton_woosoo -e "SELECT COUNT(*) as high_severity_count FROM bi_order_drift_detection WHERE severity = 'HIGH';"
+mysql -h <DB_HOST> -P <DB_PORT> -u <DB_USER> -p<DB_PASSWORD> krypton_woosoo -e "SELECT COUNT(*) as high_severity_count FROM bi_order_drift_detection WHERE severity = 'HIGH';"
 
 
 # ============================================================================
@@ -108,7 +124,7 @@ docker-compose logs -f bi-processor
 docker-compose logs bi-processor
 
 # Test database connection:
-mysql -h 192.168.100.7 -P 3308 -u woosoo_pos -ppassword -e "SELECT 1;"
+mysql -h <DB_HOST> -P <DB_PORT> -u <DB_USER> -p<DB_PASSWORD> -e "SELECT 1;"
 
 # Restart container:
 docker-compose restart bi-processor
