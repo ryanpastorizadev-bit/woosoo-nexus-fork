@@ -16,6 +16,32 @@ use App\Models\Krypton\Menu as KryptonMenu;
  */
 class RefillOrderRequest extends FormRequest
 {
+    private const REFILLABLE_GROUP_ALIASES = [
+        'meat' => [
+            'meat',
+            'meats',
+            'meat order',
+            'meat orders',
+            'meat group',
+            'beef',
+            'pork',
+            'chicken',
+            'seafood',
+        ],
+        'side' => [
+            'side',
+            'sides',
+            'side dish',
+            'side dishes',
+            'side order',
+            'vegetable',
+            'vegetables',
+            'salad',
+            'salads',
+            'banchan',
+        ],
+    ];
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -85,18 +111,10 @@ class RefillOrderRequest extends FormRequest
                 // Check menu_group, not menu_category
                 try {
                     $menu->load('group');
-                    
-                    // Refillable groups include: Meats, Sides, and specific meat types
-                    $refillableGroups = [
-                        'meats', 'sides', 'meat', 'side',
-                        'meat beef', 'meat chicken', 'meat pork', 'meat seafood',
-                        'pork', 'beef', 'chicken', 'seafood',
-                        'vegetable', 'salad', // Add sides-like items
-                    ];
-                    
-                    $groupName = $menu->group ? strtolower(trim($menu->group->name ?? '')) : '';
-                    
-                    if (!empty($groupName) && !in_array($groupName, $refillableGroups, true)) {
+
+                    $groupName = $menu->group ? (string) ($menu->group->name ?? '') : '';
+
+                    if (! empty($groupName) && ! $this->isRefillableGroupName($groupName)) {
                         $validator->errors()->add(
                             "items.{$index}.menu_id",
                             "Item '{$label}' is not available for refill (only meats and sides can be refilled)."
@@ -116,5 +134,31 @@ class RefillOrderRequest extends FormRequest
                 }
             }
         });
+    }
+
+    private function isRefillableGroupName(string $groupName): bool
+    {
+        $normalized = $this->normalizeGroupName($groupName);
+
+        if ($normalized === '') {
+            return false;
+        }
+
+        foreach (self::REFILLABLE_GROUP_ALIASES as $aliases) {
+            if (in_array($normalized, $aliases, true)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function normalizeGroupName(string $groupName): string
+    {
+        $normalized = strtolower(trim($groupName));
+        $normalized = preg_replace('/[^a-z0-9]+/', ' ', $normalized) ?? '';
+        $normalized = preg_replace('/\s+/', ' ', $normalized) ?? '';
+
+        return trim($normalized);
     }
 }

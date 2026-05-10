@@ -56,9 +56,6 @@ const ongoingFetchOrderId = ref<number | string | null>(null)
 // WebSocket connection state: 'connecting' | 'connected' | 'disconnected'
 const echoStatus = ref<'connecting' | 'connected' | 'disconnected'>('connecting')
 
-// Track whether we've actually been disconnected before (to ignore initial mount)
-let wasDisconnected = false
-
 // When Echo reconnects after a disconnection, reload orders to catch any missed
 // during the gap. When disconnected for too long, poll as a fallback.
 let disconnectPollTimer: ReturnType<typeof setTimeout> | null = null
@@ -81,9 +78,7 @@ watch(echoStatus, (newStatus, oldStatus) => {
       clearTimeout(disconnectPollTimer)
       disconnectPollTimer = null
     }
-    wasDisconnected = false
   } else if (newStatus === 'disconnected') {
-    wasDisconnected = true
     // Fallback: if still disconnected after 30 s, do a data reload so the admin
     // at least sees the current state even without a live WebSocket.
     if (disconnectPollTimer !== null) clearTimeout(disconnectPollTimer)

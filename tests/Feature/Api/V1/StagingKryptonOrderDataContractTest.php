@@ -199,6 +199,10 @@ class StagingKryptonOrderDataContractTest extends TestCase
         $this->assertSame([46, 46, 46], $rows->pluck('ordered_menu_id')->all());
         // Client sent a bogus package price above; POS menu price must win.
         $this->assertSame(399.00, (float) $rows->firstWhere('menu_id', 46)->price);
+        $freshOrder = $deviceOrder->fresh();
+        $this->assertSame(798.00, (float) $freshOrder->subtotal);
+        $this->assertSame(79.80, (float) $freshOrder->tax);
+        $this->assertSame(877.80, (float) $freshOrder->total);
         // P1 exists as an available modifier, but was not selected by customer.
         $this->assertNull($rows->firstWhere('menu_id', 11));
     }

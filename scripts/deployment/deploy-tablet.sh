@@ -13,6 +13,12 @@ TABLET_DEPLOY_BRANCH="${TABLET_DEPLOY_BRANCH:-${TABLET_BRANCH:-$NEXUS_DEPLOY_BRA
 NEXUS_DEPLOY_REF="${NEXUS_DEPLOY_REF:-}"
 TABLET_DEPLOY_REF="${TABLET_DEPLOY_REF:-}"
 
+if [[ -z "$NEXUS_DEPLOY_REF" || -z "$TABLET_DEPLOY_REF" ]]; then
+  echo "ERROR: Explicit NEXUS_DEPLOY_REF and TABLET_DEPLOY_REF are required for tablet deployments." >&2
+  echo "Set both refs to immutable commit SHAs or tags before deploying." >&2
+  exit 1
+fi
+
 compose_cmd=(docker compose -f "$COMPOSE_FILE")
 verify_script="$NEXUS_DIR/scripts/deployment/verify-tablet-deploy-context.sh"
 

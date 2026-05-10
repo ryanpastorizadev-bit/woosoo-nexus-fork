@@ -256,17 +256,12 @@ class OrderService
 
         foreach ($items as $item) {
             $quantity = (int) ($item['quantity'] ?? 0);
-            $clientPrice = $item['price'] ?? null;
-            if ($clientPrice !== null) {
-                $price = $this->money($clientPrice);
-            } else {
-                try {
-                    $posMenu = KryptonMenu::find((int) ($item['menu_id'] ?? 0));
-                    $price = $this->money($posMenu?->price ?? 0);
-                } catch (\Throwable $e) {
-                    Log::warning('OrderService: POS price lookup failed, defaulting to 0', ['menu_id' => $item['menu_id'] ?? null, 'error' => $e->getMessage()]);
-                    $price = 0.0;
-                }
+            try {
+                $posMenu = KryptonMenu::find((int) ($item['menu_id'] ?? 0));
+                $price = $this->money($posMenu?->price ?? 0);
+            } catch (\Throwable $e) {
+                Log::warning('OrderService: POS price lookup failed, defaulting to 0', ['menu_id' => $item['menu_id'] ?? null, 'error' => $e->getMessage()]);
+                $price = 0.0;
             }
 
             // Calculate item total (price * quantity)

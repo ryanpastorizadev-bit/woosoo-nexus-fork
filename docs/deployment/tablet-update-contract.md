@@ -17,6 +17,8 @@ For every tablet deployment/update run, operators must explicitly select both br
 
 - **Nexus branch** (`woosoo-nexus`)
 - **Tablet branch** (`tablet-ordering-pwa`)
+- **Explicit Nexus ref** (`NEXUS_DEPLOY_REF`)
+- **Explicit Tablet ref** (`TABLET_DEPLOY_REF`)
 
 Hard rule:
 

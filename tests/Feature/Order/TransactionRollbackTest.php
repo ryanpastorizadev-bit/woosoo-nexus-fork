@@ -78,6 +78,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -121,6 +122,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -170,6 +172,7 @@ class TransactionRollbackTest extends TestCase
             $response = $this->actingAs($device, 'device')
                 ->postJson('/api/devices/create-order', [
                     'guest_count' => 2,
+                    'package_id' => 1,
                     'subtotal' => 100,
                     'tax' => 10,
                     'discount' => 0,
@@ -217,6 +220,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -271,6 +275,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
