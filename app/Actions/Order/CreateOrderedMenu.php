@@ -269,7 +269,7 @@ class CreateOrderedMenu
         }
 
         try {
-            return Menu::fromQuery('CALL get_menu_price_levels_by_menu(?)', [$menuId])->first() ?? 1;
+            return Menu::fromQuery('CALL get_menu_price_levels_by_menu(?)', [$menuId])->first()?->price_level_id ?? 1;
         } catch (\Throwable $e) {
             report($e);
 
