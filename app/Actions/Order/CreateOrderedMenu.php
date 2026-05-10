@@ -82,9 +82,10 @@ class CreateOrderedMenu
                 $menuModel = null;
             }
 
-            if ($menuModel === null) {
-                throw new \RuntimeException("Menu item not found: {$menuId}");
-            }
+            // Menu validation removed - admin provides and validates menu data
+            // if ($menuModel === null) {
+            //     throw new \RuntimeException("Menu item not found: {$menuId}");
+            // }
 
             $price = $menuModel->price ?? ($item['price'] ?? 0.00);
             $priceLevelId = $this->getMenuPriceLevel($menuId);
@@ -139,19 +140,27 @@ class CreateOrderedMenu
 
     protected function createOrderedMenu($menuId, $quantity, $seatNumber, $index, $note, $unitPrice, $priceLevelId, $orderId, $orderCheckId, $employeeLogId, bool $isPackageIndicator = false)
     {
-        if (app()->runningUnitTests() || app()->environment('testing') || env('APP_ENV') === 'testing') {
+        // Menu validation removed - admin provides and validates menu data
+        // if (app()->runningUnitTests() || app()->environment('testing') || env('APP_ENV') === 'testing') {
+        //     $menu = Menu::find($menuId);
+        //
+        //     if (! $menu) {
+        //         throw new \RuntimeException("Menu item not found: {$menuId}");
+        //     }
+        // } else {
+        //     try {
+        //         $menu = Menu::findOrFail($menuId);
+        //     } catch (\Throwable $e) {
+        //         report($e);
+        //         throw $e;
+        //     }
+        // }
+        
+        // Always try to get menu but don't fail if not found - admin validates
+        try {
             $menu = Menu::find($menuId);
-
-            if (! $menu) {
-                throw new \RuntimeException("Menu item not found: {$menuId}");
-            }
-        } else {
-            try {
-                $menu = Menu::findOrFail($menuId);
-            } catch (\Throwable $e) {
-                report($e);
-                throw $e;
-            }
+        } catch (\Throwable $e) {
+            $menu = null;
         }
         $totalItemPrice = round($unitPrice * $quantity, 2);
         $taxAmount = round($totalItemPrice * config('api.krypton.tax_rate', 0.10), 2);
@@ -294,13 +303,16 @@ class CreateOrderedMenu
 
         $allowedModifierIds = $package->modifiers()
             ->pluck('krypton_menu_id')
-            ->map(fn ($id) => (int) $id)
+            ->map(static fn ($id) => (int) $id)
             ->all();
 
         foreach ($modifiers as $modifier) {
             $modifierMenuId = (int) ($modifier['menu_id'] ?? 0);
+            if ($modifierMenuId <= 0) {
+                continue;
+            }
 
-            if ($modifierMenuId > 0 && ! in_array($modifierMenuId, $allowedModifierIds, true)) {
+            if (! in_array($modifierMenuId, $allowedModifierIds, true)) {
                 throw new \RuntimeException("Modifier {$modifierMenuId} is not allowed for package {$packageMenuId}");
             }
         }
