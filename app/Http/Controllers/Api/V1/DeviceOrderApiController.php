@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\ApiErrorCode;
 use App\Enums\OrderStatus;
 use App\Events\Order\OrderCreated;
+use App\Exceptions\MenuItemUnavailableException;
 use App\Exceptions\SessionNotFoundException;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\StoreDeviceOrderRequest;
@@ -159,6 +161,21 @@ class DeviceOrderApiController extends Controller
             }
 
             return response()->json($responseBody, 201);
+        } catch (MenuItemUnavailableException $e) {
+            Log::warning('Order creation failed: menu item unavailable', [
+                'device_id' => $device?->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            if ($processingKey !== null) {
+                Cache::forget($processingKey);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Some menu items are no longer available. We refreshed the menu. Please review your order again.',
+                'code' => ApiErrorCode::MENU_ITEM_UNAVAILABLE->value,
+            ], 422);
         } catch (SessionNotFoundException $e) {
             // Transaction aborted: No active POS session
             if ($processingKey !== null) {
@@ -168,7 +185,7 @@ class DeviceOrderApiController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-                'code' => 'SESSION_NOT_FOUND',
+                'code' => ApiErrorCode::SESSION_NOT_FOUND->value,
             ], 503);
         } catch (QueryException $e) {
             Log::error('Order creation failed', [

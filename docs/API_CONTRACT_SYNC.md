@@ -198,7 +198,7 @@
 ## Critical Integration Points
 
 ### Order Creation Flow
-```
+```text
 PWA → POST /api/devices/create-order (idempotent)
     → Nexus → DeviceOrderApiController
     → Broadcast OrderStatusUpdated
@@ -207,14 +207,14 @@ PWA → POST /api/devices/create-order (idempotent)
 ```
 
 ### Session Sync
-```
+```text
 PWA → GET /api/session/latest
     → SessionApiController::current()
     → Returns session + server_time for clock sync
 ```
 
 ### Device Registration
-```
+```text
 PWA/Print-Bridge → POST /api/devices/register
     → DeviceAuthApiController::register()
     → Returns device + token + security_code
