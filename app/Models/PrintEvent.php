@@ -27,7 +27,9 @@ class PrintEvent extends Model
         'acknowledged_at',
         'acknowledged_by_device_id',   // NEW: Track which relay device acked (audit trail)
         'attempts',
+        'attempt_count',
         'last_error',
+        'failed_at',
         'backend_status',              // Task 2.3: backend broadcast lifecycle
         'broadcast_at',                // Task 2.3: when the backend last broadcast this event
         'retry_count',                 // Task 2.3: backend re-broadcast counter (≠ device-ack 'attempts')
@@ -38,6 +40,8 @@ class PrintEvent extends Model
         'is_acknowledged' => 'boolean',
         'acknowledged_at' => 'datetime',
         'attempts' => 'integer',
+        'attempt_count' => 'integer',
+        'failed_at' => 'datetime',
         'broadcast_at' => 'datetime',
         'retry_count' => 'integer',
     ];

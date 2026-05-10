@@ -127,9 +127,15 @@ class PrintEventService
      *
      * @return array{print_event: \App\Models\PrintEvent, was_updated: bool}
      */
-    public function fail(int $printEventId, ?string $error = null, ?int $acknowledgedByDeviceId = null): array
+    public function fail(
+        int $printEventId,
+        ?string $error = null,
+        ?int $acknowledgedByDeviceId = null,
+        ?string $failedAt = null,
+        ?int $attemptCount = null,
+    ): array
     {
-        $result = DB::transaction(function () use ($printEventId, $error, $acknowledgedByDeviceId) {
+        $result = DB::transaction(function () use ($printEventId, $error, $acknowledgedByDeviceId, $failedAt, $attemptCount) {
             $evt = PrintEvent::where('id', $printEventId)->lockForUpdate()->first();
 
             if (! $evt) {
@@ -141,8 +147,14 @@ class PrintEventService
                 return ['evt' => $evt, 'was_updated' => false];
             }
 
+            $resolvedFailedAt = $failedAt
+                ? Carbon::parse($failedAt)->setTimezone((string) config('app.timezone'))
+                : Carbon::now((string) config('app.timezone'));
+
             $evt->attempts = (int) ($evt->attempts ?? 0) + 1;
+            $evt->attempt_count = $attemptCount ?? $evt->attempt_count;
             $evt->last_error = $error;
+            $evt->failed_at = $resolvedFailedAt;
             $evt->backend_status = 'failed';
             if ($acknowledgedByDeviceId !== null) {
                 $evt->acknowledged_by_device_id = $acknowledgedByDeviceId;
