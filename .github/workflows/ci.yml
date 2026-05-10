@@ -2,9 +2,9 @@ name: CI - tests, lint, security
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, staging ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, staging ]
 
 jobs:
   build-and-test:
@@ -42,6 +42,7 @@ jobs:
       - name: Copy env and keygen
         run: |
           cp .env.example .env
+          cp .env.docker.example .env.docker
           php artisan key:generate
 
       - name: Install Node deps
@@ -55,6 +56,9 @@ jobs:
 
       - name: Build assets
         run: npm run build --if-present
+
+      - name: Validate Docker Compose config
+        run: TABLET_DOCKERFILE=Dockerfile.prod docker compose config > /dev/null
 
       - name: Run PHP tests (Pest)
         run: ./vendor/bin/pest

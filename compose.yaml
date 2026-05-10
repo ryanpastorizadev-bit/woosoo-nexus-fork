@@ -1,3 +1,10 @@
+# NOTE: This Compose file uses source bind-mounts (.:/var/www/html) for
+# app, queue, scheduler, reverb, and nginx. This is suitable for dev and staging
+# deployments where source code is present on the host.
+# For fully immutable production deployments, remove the bind-mounts and rely
+# only on built image contents + the named 'storage_data' volume.
+# See docs/DOCKER_DEPLOYMENT.md for production hardening guidance.
+
 services:
 
   # ── Reverse proxy + TLS termination ──────────────────────────────────
@@ -27,8 +34,10 @@ services:
     pull_policy: build
     restart: unless-stopped
     env_file: .env
+    environment:
+      REVERB_BROADCAST_HOST: ${PUBLIC_HOST:-woosoo.local}
     volumes:
-      - .:/var/www/html
+      - .:/var/www/html  # dev/staging: bind-mount; remove for immutable production image
       - ./docker/php/local.ini:/usr/local/etc/php/conf.d/local.ini:ro
       - storage_data:/var/www/html/storage
     depends_on:
@@ -55,7 +64,10 @@ services:
     pull_policy: build
     restart: unless-stopped
     command: ["php", "artisan", "queue:work", "redis", "--sleep=3", "--tries=1", "--timeout=30", "--max-jobs=250", "--max-time=900", "--memory=256"]
-    env_file: .env
+    env_file:
+      - .env
+      - path: .env.docker
+        required: false
     volumes:
       - .:/var/www/html
       - storage_data:/var/www/html/storage
@@ -77,15 +89,19 @@ services:
     pull_policy: build
     restart: unless-stopped
     command: ["php", "artisan", "schedule:work"]
-    env_file: .env
+    env_file:
+      - .env
+      - path: .env.docker
+        required: false
     volumes:
       - .:/var/www/html
       - storage_data:/var/www/html/storage
     depends_on:
       app:
         condition: service_healthy
-    mem_limit: 256m
-    mem_reservation: 128m
+    mem_limit: 512m
+    mem_reservation: 256m
+    memswap_limit: 768m
     networks:
       - woosoo
 
@@ -98,6 +114,8 @@ services:
     restart: unless-stopped
     command: ["php", "artisan", "reverb:start", "--host=0.0.0.0", "--port=8080", "--no-interaction"]
     env_file: .env
+    environment:
+      REVERB_BROADCAST_HOST: ${PUBLIC_HOST:-woosoo.local}
     volumes:
       - .:/var/www/html
     depends_on:
@@ -116,29 +134,46 @@ services:
   tablet-pwa:
     build:
       context: ../tablet-ordering-pwa
-      dockerfile: Dockerfile
+      dockerfile: ${TABLET_DOCKERFILE:-Dockerfile.prod}
       args:
+        BUILD_SHA: ${TABLET_BUILD_SHA:-unknown}
+        BUILD_BRANCH: ${TABLET_BUILD_BRANCH:-unknown}
+        BUILD_TIME: ${TABLET_BUILD_TIME:-unknown}
         NUXT_PUBLIC_BROADCAST_CONNECTION: reverb
         NUXT_PUBLIC_REVERB_APP_ID: ${REVERB_APP_ID:-woosoo}
         NUXT_PUBLIC_REVERB_APP_KEY: ${REVERB_APP_KEY}
-        NUXT_PUBLIC_REVERB_HOST: ${PUBLIC_HOST}
+        NUXT_PUBLIC_REVERB_HOST: ${PUBLIC_HOST:-woosoo.local}
         NUXT_PUBLIC_REVERB_PORT: "443"
         NUXT_PUBLIC_REVERB_SCHEME: https
         NUXT_PUBLIC_REVERB_PATH: /app
     pull_policy: build
     restart: unless-stopped
+    env_file: .env
     environment:
+      NODE_ENV: production
+      APP_RUNTIME_API_BASE_URL: https://${PUBLIC_HOST:-woosoo.local}/api
+      APP_RUNTIME_REVERB_HOST: ${PUBLIC_HOST:-woosoo.local}
+      APP_RUNTIME_REVERB_APP_KEY: ${REVERB_APP_KEY:-your_reverb_key_here}
+      APP_RUNTIME_REVERB_PORT: "443"
+      APP_RUNTIME_REVERB_SCHEME: https
+      APP_RUNTIME_REVERB_PATH: /app
+
+      APP_RUNTIME_BUILD_SHA: ${TABLET_BUILD_SHA:-unknown}
+      APP_RUNTIME_BUILD_BRANCH: ${TABLET_BUILD_BRANCH:-unknown}
+      APP_RUNTIME_BUILD_TIME: ${TABLET_BUILD_TIME:-unknown}
+      APP_RUNTIME_BUILD_FINGERPRINT: ${TABLET_BUILD_FINGERPRINT:-unknown}
+      APP_RUNTIME_DOCKERFILE: ${TABLET_DOCKERFILE:-Dockerfile.prod}
+
       NUXT_PUBLIC_API_BASE_URL: https://${PUBLIC_HOST:-woosoo.local}/api
       NUXT_PUBLIC_BROADCAST_CONNECTION: reverb
       NUXT_PUBLIC_REVERB_APP_ID: ${REVERB_APP_ID:-woosoo}
-      NUXT_PUBLIC_REVERB_APP_KEY: ${REVERB_APP_KEY:-your_reverb_key_here}
+      NUXT_PUBLIC_REVERB_APP_KEY: ${REVERB_APP_KEY:-woosoo}
       NUXT_PUBLIC_REVERB_HOST: ${PUBLIC_HOST:-woosoo.local}
-      NUXT_PUBLIC_REVERB_PORT: "443"
+      NUXT_PUBLIC_REVERB_PORT: 443
       NUXT_PUBLIC_REVERB_SCHEME: https
       NUXT_PUBLIC_REVERB_PATH: /app
-      # Backward compatibility for older tablet code that still reads Pusher-style names.
       MAIN_API_URL: https://${PUBLIC_HOST:-woosoo.local}
-      NUXT_PUBLIC_PUSHER_KEY: ${REVERB_APP_KEY:-your_reverb_key_here}
+      NUXT_PUBLIC_PUSHER_KEY: ${REVERB_APP_KEY}
       NUXT_PUBLIC_PUSHER_CLUSTER: mt1
       NUXT_PUBLIC_DEVICE_AUTH_PASSCODE: ${DEVICE_AUTH_PASSCODE:-}
     networks:
@@ -148,6 +183,8 @@ services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
+    mem_limit: 640m
+    mem_reservation: 384m
     command:
       - --max_connections=200
       - --wait_timeout=300
@@ -176,7 +213,9 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # maxmemory-policy: volatile-lru evicts TTL-keyed entries (Pulse buckets, sessions)
+    # first; never evicts permanent queue/lock keys (no TTL).
+    command: redis-server --appendonly yes --maxmemory 400mb --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -184,6 +223,8 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    mem_limit: 512m
+    mem_reservation: 256m
     networks:
       - woosoo
 

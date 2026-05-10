@@ -49,6 +49,7 @@ class SessionOrderValidationTest extends TestCase
 
         $payload = [
             'guest_count' => 1,
+            'package_id' => 1,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,
@@ -137,6 +138,7 @@ class SessionOrderValidationTest extends TestCase
 
         $payload = [
             'guest_count' => 1,
+            'package_id' => 1,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,
@@ -189,6 +191,7 @@ class SessionOrderValidationTest extends TestCase
 
         $payload = [
             'guest_count' => 1,
+            'package_id' => 1,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,
@@ -231,6 +234,7 @@ class SessionOrderValidationTest extends TestCase
 
         $payload = [
             'guest_count' => 1,
+            'package_id' => 1,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,

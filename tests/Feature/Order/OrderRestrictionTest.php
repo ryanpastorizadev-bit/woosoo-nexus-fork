@@ -94,6 +94,7 @@ class OrderRestrictionTest extends TestCase
             'Accept' => 'application/json',
         ])->postJson('/api/devices/create-order', [
                 'guest_count' => 1,
+                'package_id' => 46,
                 'subtotal' => 1.00,
                 'tax' => 0.00,
                 'discount' => 0.00,
@@ -148,6 +149,7 @@ class OrderRestrictionTest extends TestCase
             'Accept' => 'application/json',
         ])->postJson('/api/devices/create-order', [
                 'guest_count' => 1,
+                'package_id' => 46,
                 'subtotal' => 1.00,
                 'tax' => 0.00,
                 'discount' => 0.00,
@@ -225,6 +227,7 @@ class OrderRestrictionTest extends TestCase
         ])->postJson('/api/order/1004/refill', [
                 'items' => [
                     [
+                        'menu_id' => 99,
                         'name' => 'Brownie Sundae', // Dessert, not allowed
                         'quantity' => 1,
                     ]
@@ -237,8 +240,8 @@ class OrderRestrictionTest extends TestCase
         $response->assertStatus(422);
         $errors = $response->json('error.details');
         $this->assertIsArray($errors);
-        $this->assertArrayHasKey('items.0.name', $errors);
-        $this->assertStringContainsString('not available for refill', $errors['items.0.name'][0]);
+        $this->assertArrayHasKey('items.0.menu_id', $errors);
+        $this->assertStringContainsString('not available for refill', $errors['items.0.menu_id'][0]);
     }
 
     /**
@@ -347,8 +350,9 @@ class OrderRestrictionTest extends TestCase
                 'session_id' => $order->session_id,
             ]);
 
-        // Should reject with 403 Forbidden
-        $response->assertStatus(403);
+        // The refill endpoint is scoped to the authenticated device first, so
+        // a cross-device request is treated as "not found" before branch checks.
+        $response->assertStatus(404);
         $response->assertJson(['success' => false]);
     }
 }

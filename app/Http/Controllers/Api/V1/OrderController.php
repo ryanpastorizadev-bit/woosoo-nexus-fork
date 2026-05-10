@@ -8,6 +8,7 @@ use App\Models\DeviceOrder;
 use Illuminate\Validation\Rules\Enum as EnumRule;
 use App\Enums\OrderStatus;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class OrderController extends Controller
 {
@@ -172,13 +173,23 @@ class OrderController extends Controller
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
 
+        $targetStatus = OrderStatus::from($request->input('status'));
+
         try {
-            $order->status = OrderStatus::from($request->input('status'));
-            $order->save();
-            
-            // Broadcast status update immediately (observer will handle this)
+            DB::transaction(function () use ($order, $targetStatus) {
+                $fresh = DeviceOrder::lockForUpdate()->findOrFail($order->id);
+                if ($fresh->status === $targetStatus) {
+                    return; // idempotent — already in target state
+                }
+                $fresh->status = $targetStatus;
+                $fresh->save();
+            });
+            // Reload to get the persisted state for the response
+            $order->refresh();
         } catch (\Throwable $e) {
-            return response()->json(['success' => false, 'message' => 'Invalid status transition', 'error' => $e->getMessage()], 422);
+            Log::error('Order status transition failed', ['order_id' => $order->id, 'target_status' => $targetStatus->value, 'error' => $e->getMessage()]);
+
+            return response()->json(['success' => false, 'message' => 'Unable to change order status'], 422);
         }
 
         return response()->json(['success' => true, 'data' => [ 'id' => $order->id, 'status' => $order->status ]]);
@@ -197,6 +208,8 @@ class OrderController extends Controller
 
         $device = $request->user();
         $orderIds = $request->input('order_ids', []);
+        // Sort IDs to prevent deadlocks by ensuring consistent lock acquisition order
+        sort($orderIds, SORT_NUMERIC);
         $targetStatus = OrderStatus::from($request->input('status'));
 
         $results = ['updated' => [], 'failed' => []];
@@ -204,8 +217,8 @@ class OrderController extends Controller
         DB::beginTransaction();
         try {
             foreach ($orderIds as $oid) {
-                // Lookup by DeviceOrder ID (internal ID)
-                $order = DeviceOrder::find($oid);
+                // Lookup by DeviceOrder ID (internal ID) with a pessimistic lock
+                $order = DeviceOrder::lockForUpdate()->find($oid);
                 if (! $order) {
                     $results['failed'][] = ['order_id' => $oid, 'reason' => 'not_found'];
                     continue;

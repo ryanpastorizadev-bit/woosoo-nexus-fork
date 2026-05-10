@@ -114,6 +114,7 @@ class HappyPathIntegrationTest extends TestCase
         $response = $this->withHeader('Authorization', 'Bearer ' . $token)
             ->postJson('/api/devices/create-order', [
                 'guest_count'  => 1,
+                'package_id'   => 1,
                 'subtotal'     => 499.00,
                 'tax'          => 49.90,
                 'discount'     => 0.00,

@@ -10,8 +10,15 @@ use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 
 class MenuRepository
 {
+    /** @var string|null Cached POS driver name to avoid repeated config lookups */
+    private static ?string $cachedPosDriver = null;
+
     public function getMenus(): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenus skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menus()');
             return Menu::hydrate($rows);
@@ -26,6 +33,10 @@ class MenuRepository
 
     public static function getMenuById(int $id): ?Menu
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenuById skipped: pos driver does not support CALL');
+            return null;
+        }
         try {
              $rows = DB::connection('pos')->select('CALL get_menu_by_id(?)', [$id]);
            return Menu::hydrate($rows)->first();
@@ -47,6 +58,10 @@ class MenuRepository
      */
     public static function getMenusWithModifiers(): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenusWithModifiers skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menus_with_modifiers()');
             return Menu::hydrate($rows);
@@ -67,8 +82,12 @@ class MenuRepository
      * @throws \Exception If the database procedure call fails.
      */
 
-    public static function getMenusByCategory($category): EloquentCollection
+    public static function getMenusByCategory(string $category): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenusByCategory skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menus_by_category(?)', [$category]);
             return Menu::hydrate($rows);
@@ -95,6 +114,10 @@ class MenuRepository
 
     public function getAllModifierGroups(): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getAllModifierGroups skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_all_modifier_groups()');
             return Menu::hydrate($rows);
@@ -117,6 +140,10 @@ class MenuRepository
      */
     public function getMenuModifiers(): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenuModifiers skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menu_modifiers()');
             return Menu::hydrate($rows);
@@ -140,6 +167,10 @@ class MenuRepository
      */
     public function getMenuModifier(int $id): ?Menu
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenuModifier skipped: pos driver does not support CALL');
+            return null;
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menu_modifier(?)', [$id]);
             return Menu::hydrate($rows)->first();
@@ -165,6 +196,10 @@ class MenuRepository
 
     public function getMenuModifiersByGroup(int $modifierGroupId): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenuModifiersByGroup skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menu_modifiers_by_group(?)', [$modifierGroupId]);
             return Menu::hydrate($rows);
@@ -177,46 +212,46 @@ class MenuRepository
         }
     }
 
-    public function getMenusByCourse($course): EloquentCollection
+    public function getMenusByCourse(string $course): EloquentCollection
     {
-        try {
-              $rows = DB::connection('pos')->select('CALL get_menus_by_course(?)', [$course]);
-            $hydrated = Menu::hydrate($rows);
-
-            // If stored-proc returned no rows, fallback to local Menu model lookup by course
-            if ($hydrated->isEmpty()) {
-                try {
-                    return Menu::where('course', 'LIKE', $course)->get();
-                } catch (Exception $inner) {
-                    Log::warning('Local fallback query failed in getMenusByCourse: ' . $inner->getMessage());
-                    return $hydrated; // empty collection
-                }
-            }
-
-            return $hydrated;
-        } catch (Exception $e) {
-            Log::error('Procedure call failed (getMenusByCourse): ' . $e->getMessage());
-
-            // Attempt local fallback when stored-proc fails
+        // Attempt CALL procedure only when supported; otherwise proceed directly to fallback
+        if (self::posSupportsCall()) {
             try {
-                $local = Menu::where('course', 'LIKE', $course)->get();
-                if ($local->isNotEmpty()) {
-                    return $local;
-                }
-            } catch (Exception $inner) {
-                Log::warning('Local fallback query failed in getMenusByCourse (after proc failure): ' . $inner->getMessage());
-            }
+                $rows = DB::connection('pos')->select('CALL get_menus_by_course(?)', [$course]);
+                $hydrated = Menu::hydrate($rows);
 
-            if (app()->environment('testing')) {
-                return Menu::hydrate([]);
+                // If stored-proc returned rows, return them
+                if ($hydrated->isNotEmpty()) {
+                    return $hydrated;
+                }
+            } catch (Exception $e) {
+                Log::error('Procedure call failed (getMenusByCourse): ' . $e->getMessage());
             }
-            throw new \Exception('Something Went Wrong.');
         }
+
+        // Fallback: local Menu model lookup by course
+        try {
+            $local = Menu::where('course', 'LIKE', $course)->get();
+            if ($local->isNotEmpty()) {
+                return $local;
+            }
+        } catch (Exception $inner) {
+            Log::warning('Local fallback query failed in getMenusByCourse: ' . $inner->getMessage());
+        }
+
+        if (app()->environment('testing')) {
+            return Menu::hydrate([]);
+        }
+        throw new \Exception('Something Went Wrong.');
     }
 
 
-    public function getMenusByGroup($group): EloquentCollection
+    public function getMenusByGroup(string $group): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenusByGroup skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menus_by_group(?)', [$group]);
             return Menu::hydrate($rows);
@@ -230,8 +265,12 @@ class MenuRepository
     }
 
 
-    public function getMenuDiscountsById($menuId): EloquentCollection
+    public function getMenuDiscountsById(int $menuId): EloquentCollection
     {
+        if (!self::posSupportsCall()) {
+            Log::warning('Method getMenuDiscountsById skipped: pos driver does not support CALL');
+            return Menu::hydrate([]);
+        }
         try {
               $rows = DB::connection('pos')->select('CALL get_menu_discounts_by_id(?)', [$menuId]);
             return Menu::hydrate($rows);
@@ -244,7 +283,27 @@ class MenuRepository
         }
     }
 
+    /**
+     * Reset the cached POS driver name.
+     * Call this after Config::set + DB::purge('pos') in tests to avoid stale cache.
+     */
+    public static function resetDriverCache(): void
+    {
+        self::$cachedPosDriver = null;
+    }
 
-
-
+    /**
+     * Returns true when the pos connection supports MySQL stored-procedure CALL syntax.
+     * Resolved once per process via a static cache — getDriverName() reads from the
+     * connection config (no I/O), but caching avoids repeated config lookups in hot loops.
+     *
+     * Note: The driver is cached for the lifetime of the PHP process. If a test swaps the
+     * pos driver mid-suite via Config::set + DB::purge('pos'), this cache will be stale.
+     * DB::purge('pos') alone is insufficient — call MenuRepository::resetDriverCache() to reset.
+     */
+    private static function posSupportsCall(): bool
+    {
+        self::$cachedPosDriver ??= DB::connection('pos')->getDriverName();
+        return in_array(self::$cachedPosDriver, ['mysql', 'mariadb'], true);
+    }
 }

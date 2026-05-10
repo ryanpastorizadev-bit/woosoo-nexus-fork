@@ -115,12 +115,22 @@ class OrderApiController extends Controller
      */
     public function showByExternalId(Request $request, string $orderId)
     {
-        $order = DeviceOrder::with(['items.menu', 'table', 'device'])->where(['order_id' => $orderId])->first();
+        $device = $request->user();
+
+        $query = DeviceOrder::with(['items.menu', 'table', 'device'])->where('order_id', $orderId);
+
+        // Scope to the authenticated device so we never return another device's row
+        if ($device) {
+            $query->where('device_id', $device->id);
+        }
+
+        // Use latest() so if somehow duplicates exist, the newest row wins
+        $order = $query->latest('id')->first();
+
         if (! $order) {
             return response()->json(['success' => false, 'message' => 'Order not found'], 404);
         }
 
-        $device = $request->user();
         if ($device && isset($device->branch_id) && isset($order->branch_id) && $device->branch_id !== $order->branch_id) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
@@ -206,13 +216,15 @@ class OrderApiController extends Controller
         // RefillOrderRequest automatically validates items
         $validatedData = $request->validated();
 
-        $deviceOrder = DeviceOrder::where('order_id', $orderId)->first();
+        $device = $request->user();
+        $deviceOrder = DeviceOrder::where('order_id', $orderId)
+            ->where('device_id', $device?->id)
+            ->first();
         if (! $deviceOrder) {
             return response()->json(['success' => false, 'message' => 'Order not found'], 404);
         }
 
-        // Authorization: ensure device (if any) is allowed to operate on this order
-        $device = $request->user();
+        // Authorization: ensure device is in the same branch as the order
         if ($device && isset($device->branch_id) && isset($deviceOrder->branch_id) && $device->branch_id !== $deviceOrder->branch_id) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
@@ -272,10 +284,11 @@ class OrderApiController extends Controller
 
         $kctx = app(KryptonContextService::class);
         $kdata = $kctx->getData();
+        $orderCheckId = $this->resolvePosOrderCheckId($orderId);
 
         $attrs = [
             'order_id' => $orderId,
-            'order_check_id' => $deviceOrder->order_check_id ?? null,
+            'order_check_id' => $orderCheckId,
             // employee_log_id originates from Krypton (POS), not the local app user
             'employee_log_id' => $kdata['employee_log_id'] ?? null,
             'device_order_id' => $deviceOrder->id,
@@ -465,6 +478,26 @@ class OrderApiController extends Controller
             if ($processingKey) {
                 Cache::forget($processingKey);
             }
+        }
+    }
+
+    private function resolvePosOrderCheckId(int $orderId): ?int
+    {
+        try {
+            $orderCheckId = DB::connection('pos')
+                ->table('order_checks')
+                ->where('order_id', $orderId)
+                ->orderByDesc('id')
+                ->value('id');
+
+            return $orderCheckId !== null ? (int) $orderCheckId : null;
+        } catch (\Throwable $e) {
+            Log::warning('Unable to resolve POS order_check_id for refill', [
+                'order_id' => $orderId,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
         }
     }
 

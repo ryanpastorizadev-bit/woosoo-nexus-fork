@@ -2,26 +2,44 @@
 
 namespace Tests\Feature\Order;
 
-use Tests\TestCase;
+use App\Models\Branch;
 use App\Models\Device;
 use App\Models\DeviceOrder;
 use App\Models\Krypton\Order;
 use App\Models\Krypton\Menu;
-use App\Services\Krypton\OrderService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
+use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\TestCase;
+use Tests\Traits\MocksKryptonSession;
 
 class TransactionRollbackTest extends TestCase
 {
-    use RefreshDatabase;
+    use RefreshDatabase, MocksKryptonSession;
+
+    protected Branch $branch;
 
     protected function setUp(): void
     {
         parent::setUp();
-        $this->seed();
+
+        $this->mockActiveKryptonSession([
+            'terminal_session_id' => 1,
+        ]);
+
+        $this->branch = Branch::create([
+            'name' => 'Transaction Test Branch',
+            'location' => 'HQ',
+        ]);
+
+        DB::connection('pos')->table('tables')->insert([
+            'id' => 1,
+            'name' => 'T1',
+            'is_available' => true,
+            'is_locked' => false,
+        ]);
 
         // Seed a test menu item for order creation
         Menu::factory()->create([
@@ -37,12 +55,19 @@ class TransactionRollbackTest extends TestCase
         $this->createTestSession();
     }
 
+    protected function tearDown(): void
+    {
+        Mockery::close();
+
+        parent::tearDown();
+    }
+
     #[Test]
     public function it_rolls_back_entire_transaction_on_order_service_failure()
     {
         $device = Device::factory()->create([
             'table_id' => 1,
-            'branch_id' => 1,
+            'branch_id' => $this->branch->id,
         ]);
 
         // Count initial orders
@@ -53,6 +78,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -82,7 +108,7 @@ class TransactionRollbackTest extends TestCase
     {
         $device = Device::factory()->create([
             'table_id' => 1,
-            'branch_id' => 1,
+            'branch_id' => $this->branch->id,
         ]);
 
         // Create first order
@@ -96,6 +122,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -125,20 +152,27 @@ class TransactionRollbackTest extends TestCase
     {
         $device = Device::factory()->create([
             'table_id' => 1,
-            'branch_id' => 1,
+            'branch_id' => $this->branch->id,
         ]);
 
         $initialPosOrderCount = Order::count();
 
-        // Force local DB failure by making device_orders table unavailable
-        // (simulates network partition or local DB crash)
-        Schema::dropIfExists('device_orders_backup');
-        Schema::rename('device_orders', 'device_orders_backup');
+        // Simulate a local DB failure by injecting a fault into the
+        // DeviceOrder::creating model event. This fires inside the service's
+        // DB::transaction() block AFTER the POS-side rows have been written,
+        // exactly mirroring the network-partition / local-DB-crash scenario
+        // we want to test for orphan-prevention. We avoid Schema::rename here
+        // because DDL implicitly commits the outer RefreshDatabase transaction
+        // in SQLite, which then breaks the service-level savepoint rollback.
+        DeviceOrder::creating(function () {
+            throw new \RuntimeException('Simulated local DB failure');
+        });
 
         try {
             $response = $this->actingAs($device, 'device')
                 ->postJson('/api/devices/create-order', [
                     'guest_count' => 2,
+                    'package_id' => 1,
                     'subtotal' => 100,
                     'tax' => 10,
                     'discount' => 0,
@@ -157,18 +191,18 @@ class TransactionRollbackTest extends TestCase
 
             // Request should fail with 500 error
             $response->assertStatus(500);
-        } finally {
-            // Restore table
-            Schema::rename('device_orders_backup', 'device_orders');
-        }
 
-        // CRITICAL: Verify no orphaned POS orders were created
-        // (Transaction should have rolled back everything)
-        $this->assertEquals(
-            $initialPosOrderCount,
-            Order::count(),
-            'POS orders should NOT be created when local DB fails (cross-db transaction integrity)'
-        );
+            // CRITICAL: Verify no orphaned POS orders were created
+            // (OrderService's catch-block must have cleaned up POS-side rows)
+            $this->assertEquals(
+                $initialPosOrderCount,
+                Order::count(),
+                'POS orders should NOT be created when local DB fails (cross-db transaction integrity)'
+            );
+        } finally {
+            DeviceOrder::flushEventListeners();
+            DeviceOrder::clearBootedModels();
+        }
     }
 
     #[Test]
@@ -176,7 +210,7 @@ class TransactionRollbackTest extends TestCase
     {
         $device = Device::factory()->create([
             'table_id' => 1,
-            'branch_id' => 1,
+            'branch_id' => $this->branch->id,
         ]);
 
         $initialPosOrderCount = Order::count();
@@ -186,6 +220,7 @@ class TransactionRollbackTest extends TestCase
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,
@@ -233,13 +268,14 @@ class TransactionRollbackTest extends TestCase
 
         $device = Device::factory()->create([
             'table_id' => 1,
-            'branch_id' => 1,
+            'branch_id' => $this->branch->id,
         ]);
 
         // Trigger a failure by using invalid menu ID
         $response = $this->actingAs($device, 'device')
             ->postJson('/api/devices/create-order', [
                 'guest_count' => 2,
+                'package_id' => 1,
                 'subtotal' => 100,
                 'tax' => 10,
                 'discount' => 0,

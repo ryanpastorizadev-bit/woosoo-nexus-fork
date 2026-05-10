@@ -11,6 +11,7 @@ use App\Models\DeviceOrderItems;
 use App\Services\Krypton\OrderService;
 use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -75,6 +76,7 @@ class DeviceCreateOrderConflictTest extends TestCase
 
         $payload = [
             'guest_count' => 1,
+            'package_id' => 46,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,
@@ -99,6 +101,44 @@ class DeviceCreateOrderConflictTest extends TestCase
         $response->assertStatus(409);
         $this->assertFalse($response->json('success'));
         $this->assertStringContainsString('existing order', strtolower($response->json('message')));
+    }
+
+    public function test_duplicate_create_order_request_is_rejected_while_the_same_key_is_in_flight(): void
+    {
+        Branch::create(['name' => 'Main', 'location' => 'HQ']);
+
+        $device = Device::create([
+            'name' => 'Device Conflict Lock',
+            'ip_address' => '192.168.100.7',
+            'is_active' => true,
+            'table_id' => 10,
+        ]);
+
+        $this->createTestSession();
+
+        Cache::shouldReceive('get')->once()->andReturnNull();
+        Cache::shouldReceive('add')->once()->andReturnFalse();
+
+        $token = $device->createToken('test-token')->plainTextToken;
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer '.$token,
+            'Accept' => 'application/json',
+            'X-Idempotency-Key' => Str::uuid()->toString(),
+        ])->postJson('/api/devices/create-order', [
+            'guest_count' => 1,
+            'package_id' => 46,
+            'items' => [
+                [
+                    'menu_id' => 1,
+                    'quantity' => 1,
+                ],
+            ],
+        ]);
+
+        $response->assertStatus(409);
+        $this->assertFalse($response->json('success'));
+        $this->assertSame('Duplicate order request is already being processed', $response->json('message'));
     }
 
     public function test_order_creation_succeeds_when_realtime_broadcast_is_unavailable(): void
@@ -159,6 +199,7 @@ class DeviceCreateOrderConflictTest extends TestCase
             'X-Idempotency-Key' => Str::uuid()->toString(),
         ])->postJson('/api/devices/create-order', [
             'guest_count' => 1,
+            'package_id' => 46,
             'subtotal' => 1.00,
             'tax' => 0.00,
             'discount' => 0.00,
