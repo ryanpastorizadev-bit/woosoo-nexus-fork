@@ -12,9 +12,22 @@ class PrintEventService
 {
     /**
      * Create a print event for a DeviceOrder.
+     *
+     * NOTE: When NEXUS_PRINT_EVENTS_ENABLED=false (MVP default), this method
+     * no-ops and returns null. woosoo-print-bridge is the active print execution
+     * path. Enable the config flag for future printer expansion work.
      */
     public function createForOrder(DeviceOrder $deviceOrder, string $eventType, array $meta = []): ?PrintEvent
     {
+        // Check feature flag - disabled by default for MVP (woosoo-print-bridge is primary)
+        if (! config('api.print_events_enabled', false)) {
+            Log::info('PrintEvent creation skipped: woosoo-print-bridge is primary print execution path', [
+                'device_order_id' => $deviceOrder->id,
+                'event_type' => $eventType,
+            ]);
+            return null;
+        }
+
         // Treat `session_id` as device-local. Do not consult POS sessions here.
         // Always create print events for device orders; session scoping is handled client-side.
 

@@ -53,6 +53,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->alias([
             'throttle.device' => \App\Http\Middleware\ThrottleByDevice::class,
+            'print_events.enabled' => \App\Http\Middleware\PrintEventFeatureFlag::class,
         ]);
 
         // Replace CSRF middleware with an exemption-aware variant.
