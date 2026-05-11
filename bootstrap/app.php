@@ -55,9 +55,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'throttle.device' => \App\Http\Middleware\ThrottleByDevice::class,
         ]);
 
-        // Stateful API (cookie-based SPA auth) is intentionally disabled.
-        // Device auth uses Bearer tokens only; CSRF protection via cookies is not needed.
-        // $middleware->statefulApi();
+        // Enable stateful API for web admin (Inertia + Sanctum session auth)
+        // Device API still uses Bearer tokens via auth:device guard.
+        $middleware->statefulApi();
     })
     
     ->withExceptions(function (Exceptions $exceptions) {
