@@ -1,5 +1,13 @@
 <?php
 // Direct database update using PDO
+$force = in_array('--force', $argv ?? [], true);
+
+if (! $force) {
+    fwrite(STDERR, "Refusing to reseed package_modifiers without --force.\n");
+    fwrite(STDERR, "Usage: php scripts/update_package_modifiers.php --force\n");
+    exit(1);
+}
+
 $env = parse_ini_file('.env');
 $dsn = "mysql:host={$env['DB_HOST']};port={$env['DB_PORT']};dbname={$env['DB_DATABASE']}";
 $pdo = new PDO($dsn, $env['DB_USERNAME'], $env['DB_PASSWORD']);
