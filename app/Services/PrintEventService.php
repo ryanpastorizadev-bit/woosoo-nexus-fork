@@ -62,7 +62,15 @@ class PrintEventService
      */
     public function ack(int $printEventId, ?string $printerId = null, ?string $printedAt = null, ?int $acknowledgedByDeviceId = null, ?string $printerName = null, ?string $verificationMode = null): array
     {
-        $ackAt = $printedAt ? Carbon::parse($printedAt)->utc() : Carbon::now()->utc();
+        // Fix: Client sends UTC timestamps, but app timezone is Asia/Manila.
+        // We need to convert the UTC timestamp to Asia/Manila before storing.
+        // When Laravel reads it back as Asia/Manila, it will be correct.
+        if ($printedAt) {
+            // Parse as UTC, then convert to app timezone (Asia/Manila) for storage
+            $ackAt = Carbon::parse($printedAt, 'UTC')->setTimezone(config('app.timezone', 'Asia/Manila'));
+        } else {
+            $ackAt = Carbon::now();
+        }
         $result = DB::transaction(function () use ($printEventId, $printerId, $ackAt, $acknowledgedByDeviceId, $printerName, $verificationMode) {
             // Lock the row to avoid race conditions when multiple workers
             // acknowledge/fail the same print event concurrently.
@@ -172,4 +180,5 @@ class PrintEventService
             'was_updated' => $result['was_updated'],
         ];
     }
+
 }

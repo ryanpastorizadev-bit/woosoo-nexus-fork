@@ -281,7 +281,7 @@ class CreateOrderedMenu
             ->first();
 
         if (! $package) {
-            return;
+            throw new \InvalidArgumentException("Package with krypton_menu_id {$packageMenuId} not found or inactive.", 422);
         }
 
         $allowedModifierIds = $package->modifiers()
@@ -292,11 +292,11 @@ class CreateOrderedMenu
         foreach ($modifiers as $modifier) {
             $modifierMenuId = (int) ($modifier['menu_id'] ?? 0);
             if ($modifierMenuId <= 0) {
-                continue;
+                throw new \InvalidArgumentException("Invalid modifier: menu_id must be greater than 0.", 422);
             }
 
             if (! in_array($modifierMenuId, $allowedModifierIds, true)) {
-                throw new \RuntimeException("Modifier {$modifierMenuId} is not allowed for package {$packageMenuId}");
+                throw new \InvalidArgumentException("Modifier {$modifierMenuId} is not allowed for package {$packageMenuId}.", 422);
             }
         }
     }

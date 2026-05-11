@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Casts\UtcDateTimeCast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -40,11 +41,11 @@ class PrintEvent extends Model
     protected $casts = [
         'meta' => 'array',
         'is_acknowledged' => 'boolean',
-        'acknowledged_at' => 'datetime',
+        'acknowledged_at' => UtcDateTimeCast::class,
         'attempts' => 'integer',           // Backend-managed retry counter.
         'attempt_count' => 'integer',      // Device-reported attempts from relay payload.
-        'failed_at' => 'datetime',
-        'broadcast_at' => 'datetime',
+        'failed_at' => UtcDateTimeCast::class,
+        'broadcast_at' => UtcDateTimeCast::class,
         'retry_count' => 'integer',
     ];
 
