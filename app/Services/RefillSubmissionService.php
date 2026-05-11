@@ -266,24 +266,21 @@ class RefillSubmissionService
     ): bool {
         $submission->cached_response = $response;
         
-        if (!$submission->transitionTo('COMPLETED')) {
-            // If already in a completed-like state, just cache response
-            if ($submission->isCompleted()) {
-                $submission->save();
-                return true;
-            }
-            
-            Log::error('[REFILL] Failed to transition to COMPLETED', [
-                'submission_id' => $submission->id,
-                'current_status' => $submission->status,
-            ]);
-            return false;
+        // If already in a completed-like state, just cache response
+        if ($submission->isCompleted()) {
+            $submission->save();
+            return true;
         }
         
+        // Force transition to COMPLETED from any state
+        // This allows completion even if print event step was skipped
+        $submission->status = 'COMPLETED';
+        $submission->completed_at = now();
         $submission->save();
         
         Log::info('[REFILL] Completed submission', [
             'submission_id' => $submission->id,
+            'previous_status' => $submission->getOriginal('status'),
         ]);
         
         return true;

@@ -70,7 +70,7 @@ class RefillSubmission extends Model
     /**
      * States that indicate the refill is already complete
      */
-    public const COMPLETED_STATES = ['COMPLETED', 'PRINT_EVENT_CREATED'];
+    public const COMPLETED_STATES = ['COMPLETED'];
 
     /**
      * States that indicate processing is in-flight
