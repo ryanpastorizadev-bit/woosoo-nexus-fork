@@ -59,10 +59,16 @@ class ApiCsrfExemption extends ValidateCsrfToken
         'api/device/table',
         'api/token/verify',
 
-        // Session endpoints (device-authenticated)
+        // ============================================================
+        // DEVICE API (auth:device - Bearer token stateless)
+        // ============================================================
+        // Device order and session endpoints
+        'api/device-order/*',               // GET /device-order/{order}
+        'api/device-orders',                // GET /device-orders (index)
         'api/session/latest',
         'api/sessions/current',
         'api/sessions/join',
+        'api/devices/latest-session',
 
         // Table & service endpoints
         'api/tables/services',
@@ -71,21 +77,23 @@ class ApiCsrfExemption extends ValidateCsrfToken
         // ============================================================
         // ORDER API (auth:device - Bearer token stateless)
         // ============================================================
-        'api/device-order/*',               // GET /device-order/{order}
-        'api/device-orders',                // GET /device-orders (index)
-        'api/order/*',                      // Covers: refill, printed, print, dispatch
+        'api/order/*/dispatch',
+        'api/order/*/refill',
+        'api/order/*/print-refill',
+        'api/order/*/printed',
+        'api/order/*/print',
 
         // ============================================================
         // MENU API (Public/guest or auth:device - stateless)
         // ============================================================
         'api/menus',
-        'api/menus/*',                      // All menu sub-routes
+        'api/menus/*',
 
         // ============================================================
         // V1 API (auth:device - Bearer token stateless)
         // ============================================================
         'api/v1/orders',
-        'api/v1/orders/*',                  // GET/PATCH /v1/orders/{order}
+        'api/v1/orders/*',
         'api/v1/orders/status/bulk',
 
         // ============================================================
@@ -104,18 +112,19 @@ class ApiCsrfExemption extends ValidateCsrfToken
         // ============================================================
         'api/printer/unprinted-events',
         'api/printer/unprinted-orders',
-        'api/printer/print-events/*',       // ack, failed
+        'api/printer/print-events/*',
         'api/printer/heartbeat',
         'api/print-events/unprinted',
-        'api/orders/*/printed',             // Printer mark printed
+        'api/print-events/*',
+        'api/orders/*/printed',
         'api/orders/printed/bulk',
 
         // ============================================================
         // PUBLIC/MISC (No auth or stateless)
         // ============================================================
+        'api/device/ip',
         'api/config',
         'api/deployment-info',
-        'api/device/ip',
         'api/health',
         'api/token/create',                 // Guest user token creation
     ];

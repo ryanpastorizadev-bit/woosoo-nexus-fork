@@ -8,387 +8,486 @@ use App\Models\DeviceOrderItems;
 use App\Models\Krypton\Menu;
 use App\Models\PrintEvent;
 use App\Models\RefillSubmission;
-use App\Services\DurableRefillGuard;
+use App\Services\RefillSubmissionService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
- * WS4: Refill Idempotency Tests
+ * Refill Idempotency Tests
  * 
- * These tests prove that the durable refill submission guard prevents
- * duplicate POS ordered_menu rows and ensures idempotent retries.
+ * Verifies that refill submissions cannot duplicate POS ordered_menu rows
+ * even when retries occur after partial failures.
  */
 class RefillIdempotencyTest extends TestCase
 {
     use RefreshDatabase;
 
-    private DurableRefillGuard $guard;
     private Device $device;
-    private DeviceOrder $order;
-    private Menu $menu;
+    private DeviceOrder $deviceOrder;
+    private RefillSubmissionService $submissionService;
 
     protected function setUp(): void
     {
         parent::setUp();
         
-        $this->guard = app(DurableRefillGuard::class);
+        $this->submissionService = app(RefillSubmissionService::class);
         
-        // Create test device and order
-        $this->device = Device::factory()->create();
-        $this->order = DeviceOrder::factory()->create([
+        $this->device = Device::factory()->create([
+            'security_code' => 'test-token',
+        ]);
+        
+        $this->deviceOrder = DeviceOrder::factory()->create([
             'device_id' => $this->device->id,
             'order_id' => 12345,
             'order_number' => 'TEST-001',
-        ]);
-        
-        // Create test menu item (must be refillable - meat/side)
-        $this->menu = Menu::factory()->create([
-            'name' => 'Beef Bulgogi',
-            'receipt_name' => 'Beef Bulgogi',
-            'price' => 350.00,
+            'session_id' => 'test-session',
         ]);
     }
 
     /** @test */
-    public function it_creates_new_submission_when_none_exists()
+    public function it_creates_new_submission_for_first_request()
     {
-        $clientSubmissionId = 'test-submission-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        $result = $this->guard->startSubmission(
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
         
-        $this->assertTrue($result['is_new']);
-        $this->assertFalse($result['can_replay']);
-        $this->assertFalse($result['is_processing']);
+        $this->assertEquals('new', $result['status']);
         $this->assertInstanceOf(RefillSubmission::class, $result['submission']);
-        
-        // Verify DB record
-        $submission = RefillSubmission::where([
-            'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
-            'client_submission_id' => $clientSubmissionId,
-        ])->first();
-        
-        $this->assertNotNull($submission);
-        $this->assertEquals('PROCESSING', $submission->status);
+        $this->assertEquals('PROCESSING', $result['submission']->status);
+        $this->assertEquals($this->device->id, $result['submission']->device_id);
+        $this->assertEquals($this->deviceOrder->id, $result['submission']->device_order_id);
+        $this->assertEquals($clientSubmissionId, $result['submission']->client_submission_id);
     }
 
     /** @test */
-    public function it_returns_cached_response_for_completed_submission()
+    public function it_returns_completed_status_for_existing_completed_submission()
     {
-        $clientSubmissionId = 'test-completed-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create completed submission with cached response
-        $submission = RefillSubmission::create([
-            'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
-            'client_submission_id' => $clientSubmissionId,
-            'status' => 'COMPLETED',
-            'response_payload' => ['success' => true, 'order_id' => 12345],
-            'response_status' => 200,
-        ]);
-        
-        $result = $this->guard->guard(
+        // Create and complete a submission
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
         
-        $this->assertFalse($result['proceed']);
-        $this->assertNotNull($result['response']);
-        $this->assertEquals(200, $result['response']->getStatusCode());
+        $submission = $result['submission'];
+        $this->submissionService->markPosCreated($submission, [100, 101]);
+        $this->submissionService->markMirrored($submission);
+        $this->submissionService->markPrintEventCreated($submission);
         
-        $responseData = json_decode($result['response']->getContent(), true);
-        $this->assertTrue($responseData['success']);
-        $this->assertEquals(12345, $responseData['order_id']);
+        $cachedResponse = ['success' => true, 'order_id' => $this->deviceOrder->id];
+        $this->submissionService->completeSubmission($submission, $cachedResponse);
+        
+        // Second request should return completed status with cached response
+        $secondResult = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $this->assertEquals('completed', $secondResult['status']);
+        $this->assertEquals($cachedResponse, $secondResult['response']);
     }
 
     /** @test */
-    public function it_returns_409_for_processing_submission()
+    public function it_returns_conflict_status_for_processing_submission()
     {
-        $clientSubmissionId = 'test-processing-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create processing submission
-        $submission = RefillSubmission::create([
-            'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
-            'client_submission_id' => $clientSubmissionId,
-            'status' => 'PROCESSING',
-        ]);
-        
-        $result = $this->guard->guard(
+        // Create submission
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
         
-        $this->assertFalse($result['proceed']);
-        $this->assertNotNull($result['response']);
-        $this->assertEquals(409, $result['response']->getStatusCode());
+        // Mark as POS_CREATED (in-flight)
+        $this->submissionService->markPosCreated($result['submission'], [100]);
         
-        $responseData = json_decode($result['response']->getContent(), true);
-        $this->assertEquals('REFILL_IN_PROGRESS', $responseData['error']['code']);
+        // Second request should return conflict
+        $secondResult = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $this->assertEquals('conflict', $secondResult['status']);
+        $this->assertEquals('POS_CREATED', $secondResult['submission']->status);
     }
 
     /** @test */
-    public function it_allows_retry_from_failed_state()
+    public function it_allows_retry_for_failed_submission()
     {
-        $clientSubmissionId = 'test-failed-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create failed submission
-        $submission = RefillSubmission::create([
-            'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
-            'client_submission_id' => $clientSubmissionId,
-            'status' => 'FAILED',
-            'error_message' => 'Previous failure',
-        ]);
-        
-        $result = $this->guard->startSubmission(
+        // Create and fail a submission
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
         
-        $this->assertFalse($result['is_new']);
-        $this->assertFalse($result['can_replay']);
-        $this->assertFalse($result['is_processing']);
+        $this->submissionService->markFailed($result['submission'], 'Local mirror failed');
         
-        // Status should have transitioned to PROCESSING
-        $submission->refresh();
-        $this->assertEquals('PROCESSING', $submission->status);
+        // Retry should allow new processing
+        $retryResult = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $this->assertEquals('new', $retryResult['status']);
+        $this->assertEquals('PROCESSING', $retryResult['submission']->status);
+        // failed_at is cleared on retry since we're starting fresh
+        $this->assertNull($retryResult['submission']->failed_at);
     }
 
     /** @test */
-    public function it_records_pos_ordered_menu_ids_and_prevents_duplicate_inserts()
+    public function it_allows_different_client_submission_ids_for_same_order()
     {
-        $clientSubmissionId = 'test-pos-' . uniqid();
+        $clientSubmissionId1 = Str::uuid()->toString();
+        $clientSubmissionId2 = Str::uuid()->toString();
         
-        // Start submission
-        $result = $this->guard->startSubmission(
+        // First submission
+        $result1 = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
+            $clientSubmissionId1
+        );
+        
+        // Complete first submission
+        $this->submissionService->markPosCreated($result1['submission'], [100]);
+        $this->submissionService->markMirrored($result1['submission']);
+        $this->submissionService->completeSubmission($result1['submission'], ['success' => true]);
+        
+        // Different submission ID should create new submission
+        $result2 = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId2
+        );
+        
+        $this->assertEquals('new', $result2['status']);
+        $this->assertNotEquals($result1['submission']->id, $result2['submission']->id);
+    }
+
+    /** @test */
+    public function it_stores_pos_ordered_menu_ids_for_idempotency_verification()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
             $clientSubmissionId
         );
+        
+        $posOrderedMenuIds = [100, 101, 102];
+        $this->submissionService->markPosCreated($result['submission'], $posOrderedMenuIds);
+        
+        $result['submission']->refresh();
+        $this->assertEquals($posOrderedMenuIds, $result['submission']->pos_ordered_menu_ids);
+    }
+
+    /** @test */
+    public function it_verifies_pos_result_matches_stored_ids()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $storedIds = [100, 101];
+        $this->submissionService->markPosCreated($result['submission'], $storedIds);
+        
+        // Same IDs should match
+        $this->assertTrue($this->submissionService->verifyPosResultMatches(
+            $result['submission'],
+            [100, 101]
+        ));
+        
+        // Different IDs should not match
+        $this->assertFalse($this->submissionService->verifyPosResultMatches(
+            $result['submission'],
+            [100, 102]
+        ));
+    }
+
+    /** @test */
+    public function it_transitions_through_state_machine_correctly()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
         $submission = $result['submission'];
         
-        // Mark POS created with ordered_menu IDs
-        $orderedMenuIds = [1001, 1002, 1003];
-        $this->guard->markPosCreated($submission, $orderedMenuIds);
-        
-        $submission->refresh();
-        
-        // Verify state
-        $this->assertEquals('POS_CREATED', $submission->status);
-        $this->assertEquals($orderedMenuIds, $submission->pos_ordered_menu_ids);
-        
-        // Check if POS already done
-        $posCheck = $this->guard->checkPosAlreadyDone($submission);
-        $this->assertTrue($posCheck['already_done']);
-        $this->assertEquals($orderedMenuIds, $posCheck['ordered_menu_ids']);
-    }
-
-    /** @test */
-    public function it_tracks_state_transitions_correctly()
-    {
-        $clientSubmissionId = 'test-state-' . uniqid();
-        
-        $result = $this->guard->startSubmission(
-            $this->device,
-            $this->order,
-            $clientSubmissionId
-        );
-        $submission = $result['submission'];
-        
-        // NEW → PROCESSING (happens in startSubmission)
+        // NEW (via factory) → PROCESSING (on creation)
         $this->assertEquals('PROCESSING', $submission->status);
         
         // PROCESSING → POS_CREATED
-        $this->guard->markPosCreated($submission, [1001]);
+        $this->assertTrue($this->submissionService->markPosCreated($submission, [100]));
         $submission->refresh();
         $this->assertEquals('POS_CREATED', $submission->status);
+        $this->assertNotNull($submission->pos_created_at);
         
         // POS_CREATED → MIRRORED
-        $this->guard->markMirrored($submission);
+        $this->assertTrue($this->submissionService->markMirrored($submission));
         $submission->refresh();
         $this->assertEquals('MIRRORED', $submission->status);
+        $this->assertNotNull($submission->mirrored_at);
         
         // MIRRORED → PRINT_EVENT_CREATED
-        $printEvent = PrintEvent::factory()->create([
-            'device_order_id' => $this->order->id,
-            'event_type' => 'REFILL',
-        ]);
-        $this->guard->markPrintEventCreated($submission, $printEvent);
+        $this->assertTrue($this->submissionService->markPrintEventCreated($submission));
         $submission->refresh();
         $this->assertEquals('PRINT_EVENT_CREATED', $submission->status);
-        $this->assertEquals($printEvent->id, $submission->print_event_id);
+        $this->assertNotNull($submission->print_event_created_at);
         
         // PRINT_EVENT_CREATED → COMPLETED
-        $this->guard->markCompleted($submission, ['success' => true], 200);
-        $submission->refresh();
+        $this->assertTrue($this->submissionService->completeSubmission($submission, ['success' => true]));
+        $submission = $submission->fresh(); // Get fully refreshed model
         $this->assertEquals('COMPLETED', $submission->status);
         $this->assertNotNull($submission->completed_at);
-        $this->assertEquals(['success' => true], $submission->response_payload);
     }
 
     /** @test */
-    public function it_prevents_duplicate_submissions_with_same_idempotency_key()
+    public function it_caches_response_on_completion()
     {
-        $clientSubmissionId = 'test-duplicate-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create first submission
-        $result1 = $this->guard->startSubmission(
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
-        $submission1 = $result1['submission'];
         
-        // Try to create second submission with same key
-        $result2 = $this->guard->startSubmission(
-            $this->device,
-            $this->order,
-            $clientSubmissionId
-        );
-        $submission2 = $result2['submission'];
+        $cachedResponse = [
+            'success' => true,
+            'order' => ['id' => $this->deviceOrder->id],
+            'created' => [['id' => 100]],
+        ];
         
-        // Should be the same submission
-        $this->assertEquals($submission1->id, $submission2->id);
-        $this->assertFalse($result2['is_new']);
-        $this->assertFalse($result2['can_replay']); // Not completed yet
-        $this->assertTrue($result2['is_processing']); // Currently processing
+        $this->submissionService->markPosCreated($result['submission'], [100]);
+        $this->submissionService->markMirrored($result['submission']);
+        $this->submissionService->completeSubmission($result['submission'], $cachedResponse);
+        
+        $result['submission']->refresh();
+        $this->assertEquals($cachedResponse, $result['submission']->cached_response);
     }
 
     /** @test */
-    public function it_allows_different_client_submission_ids_for_different_refills()
+    public function it_detects_stale_lock_and_allows_retry()
     {
-        $clientSubmissionId1 = 'test-different-1-' . uniqid();
-        $clientSubmissionId2 = 'test-different-2-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create first submission
-        $result1 = $this->guard->startSubmission(
+        // Create submission with old processing timestamp
+        $submission = RefillSubmission::create([
+            'device_id' => $this->device->id,
+            'device_order_id' => $this->deviceOrder->id,
+            'client_submission_id' => $clientSubmissionId,
+            'status' => 'PROCESSING',
+            'processing_started_at' => now()->subSeconds(400), // Beyond 300s timeout
+        ]);
+        
+        // Should allow retry due to stale lock
+        $result = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
-            $clientSubmissionId1
+            $this->deviceOrder,
+            $clientSubmissionId
         );
-        $submission1 = $result1['submission'];
         
-        // Create second submission with different key
-        $result2 = $this->guard->startSubmission(
-            $this->device,
-            $this->order,
-            $clientSubmissionId2
-        );
-        $submission2 = $result2['submission'];
-        
-        // Should be different submissions
-        $this->assertNotEquals($submission1->id, $submission2->id);
-        $this->assertTrue($result1['is_new']);
-        $this->assertTrue($result2['is_new']);
+        $this->assertEquals('new', $result['status']);
+        $this->assertEquals('PROCESSING', $result['submission']->status);
+        $this->assertGreaterThan($submission->processing_started_at, $result['submission']->processing_started_at);
     }
 
     /** @test */
-    public function it_marks_submission_as_failed_on_error()
+    public function it_prevents_duplicate_pos_insert_on_concurrent_requests()
     {
-        $clientSubmissionId = 'test-fail-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        $result = $this->guard->startSubmission(
+        // First request acquires lock
+        $result1 = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
+            $this->deviceOrder,
             $clientSubmissionId
         );
+        
+        // Mark as POS_CREATED to simulate successful POS insert
+        $this->submissionService->markPosCreated($result1['submission'], [100, 101]);
+        
+        // Second concurrent request should detect existing submission and return conflict
+        $result2 = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $this->assertEquals('conflict', $result2['status']);
+        
+        // Only one submission should exist in database
+        $this->assertEquals(1, RefillSubmission::where([
+            'device_id' => $this->device->id,
+            'device_order_id' => $this->deviceOrder->id,
+            'client_submission_id' => $clientSubmissionId,
+        ])->count());
+    }
+
+    /** @test */
+    public function it_marks_failed_and_allows_recovery()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
         $submission = $result['submission'];
         
-        $errorMessage = 'Database connection failed';
-        $this->guard->markFailed($submission, $errorMessage);
+        // Mark POS created then fail
+        $this->submissionService->markPosCreated($submission, [100]);
+        $this->submissionService->markFailed($submission, 'Connection timeout during local mirror');
         
         $submission->refresh();
         $this->assertEquals('FAILED', $submission->status);
-        $this->assertEquals($errorMessage, $submission->error_message);
         $this->assertNotNull($submission->failed_at);
+        $this->assertNotNull($submission->last_error);
+        $this->assertStringContainsString('Connection timeout', $submission->last_error);
     }
 
     /** @test */
-    public function it_reuses_existing_print_event_on_retry()
+    public function it_allows_new_submission_after_failure_for_retry()
     {
-        $clientSubmissionId = 'test-print-reuse-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Start submission and complete through print event creation
-        $result = $this->guard->startSubmission(
+        // First attempt - create and fail
+        $result1 = $this->submissionService->acquireOrFindSubmission(
             $this->device,
-            $this->order,
-            $clientSubmissionId
-        );
-        $submission = $result['submission'];
-        
-        // Create print event
-        $printEvent = PrintEvent::factory()->create([
-            'device_order_id' => $this->order->id,
-            'event_type' => 'REFILL',
-            'idempotency_key' => "refill:{$this->order->id}:{$clientSubmissionId}",
-            'client_submission_id' => $clientSubmissionId,
-        ]);
-        
-        $this->guard->markPrintEventCreated($submission, $printEvent);
-        
-        $submission->refresh();
-        $this->assertEquals($printEvent->id, $submission->print_event_id);
-        
-        // Verify PrintTicketService would reuse the same event
-        $printTicketService = app(\App\Services\PrintTicketService::class);
-        $reusedEvent = $printTicketService->createRefillPrintEvent(
-            $this->order,
-            [], // empty items for test
+            $this->deviceOrder,
             $clientSubmissionId
         );
         
-        $this->assertEquals($printEvent->id, $reusedEvent->id);
+        $this->submissionService->markPosCreated($result1['submission'], [100]);
+        $this->submissionService->markFailed($result1['submission'], 'Local mirror failed');
+        
+        // Retry - should reset to PROCESSING
+        $result2 = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        $this->assertEquals('new', $result2['status']);
+        $this->assertEquals('PROCESSING', $result2['submission']->status);
+        
+        // Complete retry successfully
+        $this->submissionService->markPosCreated($result2['submission'], [100]);
+        $this->submissionService->markMirrored($result2['submission']);
+        $this->submissionService->completeSubmission($result2['submission'], ['success' => true]);
+        
+        // Verify final state
+        $result2['submission']->refresh();
+        $this->assertEquals('COMPLETED', $result2['submission']->status);
     }
 
     /** @test */
-    public function it_enforces_unique_constraint_on_submissions()
+    public function it_enforces_unique_constraint_on_device_order_submission()
     {
-        $clientSubmissionId = 'test-unique-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        // Create first submission
+        // Create first submission (with active lock)
         RefillSubmission::create([
             'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
+            'device_order_id' => $this->deviceOrder->id,
             'client_submission_id' => $clientSubmissionId,
             'status' => 'PROCESSING',
+            'processing_started_at' => now(),
         ]);
         
-        // Attempt to create duplicate should throw exception
-        $this->expectException(\Illuminate\Database\QueryException::class);
+        // Attempting to create duplicate should result in finding existing
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
         
-        RefillSubmission::create([
+        $this->assertEquals('conflict', $result['status']); // Should find existing and report conflict
+        $this->assertEquals(1, RefillSubmission::where([
             'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
+            'device_order_id' => $this->deviceOrder->id,
             'client_submission_id' => $clientSubmissionId,
-            'status' => 'NEW',
-        ]);
+        ])->count());
     }
 
     /** @test */
-    public function it_returns_empty_pos_items_when_no_ordered_menu_ids_recorded()
+    public function it_returns_null_response_for_non_completed_submission()
     {
-        $clientSubmissionId = 'test-empty-pos-' . uniqid();
+        $clientSubmissionId = Str::uuid()->toString();
         
-        $submission = RefillSubmission::create([
-            'device_id' => $this->device->id,
-            'order_id' => $this->order->id,
-            'client_submission_id' => $clientSubmissionId,
-            'status' => 'MIRRORED', // MIRRORED but no pos_ordered_menu_ids
-            'pos_ordered_menu_ids' => null,
-        ]);
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
         
-        $posCheck = $this->guard->checkPosAlreadyDone($submission);
-        $this->assertTrue($posCheck['already_done']);
-        $this->assertEmpty($posCheck['ordered_menu_ids']);
+        $this->assertNull($result['response']);
+    }
+
+    /** @test */
+    public function it_handles_empty_pos_ordered_menu_ids_in_verification()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        // No POS IDs stored yet - should return true (no previous data)
+        $this->assertTrue($this->submissionService->verifyPosResultMatches(
+            $result['submission'],
+            [100, 101]
+        ));
+    }
+
+    /** @test */
+    public function it_completes_submission_without_state_transition_if_already_completed()
+    {
+        $clientSubmissionId = Str::uuid()->toString();
+        
+        $result = $this->submissionService->acquireOrFindSubmission(
+            $this->device,
+            $this->deviceOrder,
+            $clientSubmissionId
+        );
+        
+        // Complete once
+        $this->submissionService->markPosCreated($result['submission'], [100]);
+        $this->submissionService->markMirrored($result['submission']);
+        $this->submissionService->completeSubmission($result['submission'], ['success' => true]);
+        
+        // Calling complete again should still succeed
+        $newResponse = ['success' => true, 'updated' => true];
+        $this->assertTrue($this->submissionService->completeSubmission($result['submission'], $newResponse));
+        
+        $result['submission']->refresh();
+        $this->assertEquals($newResponse, $result['submission']->cached_response);
     }
 }
