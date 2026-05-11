@@ -31,14 +31,38 @@ class ApiCsrfExemption extends ValidateCsrfToken
         'api/devices/logout',
         'api/device/table',
         'api/token/verify',
-        'api/devices/*',
-        'api/v1/*',
-        'api/v2/*',
-        'api/printer/*',
-        'api/print-events/*',
-        'api/order/*/dispatch',
+        
+        // Device order and session endpoints (stateless Bearer token auth)
+        'api/device-order/*',
+        'api/device-orders',
+        'api/sessions/*',
         'api/session/latest',
         'api/service/request',
         'api/tables/services',
+        
+        // Order endpoints (stateless Bearer token auth)
+        'api/order/*/dispatch',
+        'api/order/*/refill',
+        'api/order/*/print-refill',
+        
+        // V1 device API endpoints (stateless Bearer token auth)
+        'api/v1/orders',
+        'api/v1/orders/*',
+        
+        // V2 tablet API endpoints (stateless Bearer token auth)
+        'api/v2/tablet/*',
+        
+        // Printer API endpoints (stateless Bearer token auth)
+        'api/printer/*',
+        'api/print-events/*',
+        'api/orders/*/printed',
+        'api/orders/printed/bulk',
+        
+        // Public endpoints (no auth required)
+        'api/device/ip',
+        'api/config',
+        'api/deployment-info',
+        'api/health',
+        'api/menus/*',
     ];
 }
