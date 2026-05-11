@@ -3,6 +3,7 @@
 $env = parse_ini_file('.env');
 $dsn = "mysql:host={$env['DB_HOST']};port={$env['DB_PORT']};dbname={$env['DB_DATABASE']}";
 $pdo = new PDO($dsn, $env['DB_USERNAME'], $env['DB_PASSWORD']);
+$pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 
 // Prepare data
 $packages = [
@@ -11,15 +12,24 @@ $packages = [
     48 => [49, 50, 51, 52, 53, 54, 55, 56, 61, 62, 63, 64, 65, 66],
 ];
 
-// Clear existing
-$pdo->exec('TRUNCATE TABLE package_modifiers');
+try {
+    $pdo->beginTransaction();
+    $pdo->exec('TRUNCATE TABLE package_modifiers');
 
-$stmt = $pdo->prepare('INSERT INTO package_modifiers (package_id, menu_id, position) VALUES (?, ?, ?)');
+    $stmt = $pdo->prepare('INSERT INTO package_modifiers (package_id, menu_id, position) VALUES (?, ?, ?)');
 
-foreach ($packages as $package_id => $modifiers) {
-    foreach ($modifiers as $position => $menu_id) {
-        $stmt->execute([$package_id, $menu_id, $position + 1]);
+    foreach ($packages as $package_id => $modifiers) {
+        foreach ($modifiers as $position => $menu_id) {
+            $stmt->execute([$package_id, $menu_id, $position + 1]);
+        }
     }
+
+    $pdo->commit();
+} catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    throw $e;
 }
 
 echo "✅ Package 46: 5 modifiers added\n";

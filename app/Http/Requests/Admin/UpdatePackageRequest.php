@@ -1,5 +1,5 @@
 <?php
-// Audit Fix (2026-04-06): validate package update payloads and preserve krypton_menu_id uniqueness.
+// Audit Fix (2026-04-06): validate package update payloads, including modifier payload shape.
 
 namespace App\Http\Requests\Admin;
 

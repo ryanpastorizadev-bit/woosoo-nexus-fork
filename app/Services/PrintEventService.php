@@ -148,10 +148,12 @@ class PrintEventService
             }
 
             $resolvedFailedAt = $failedAt
-                ? Carbon::parse($failedAt)->setTimezone((string) config('app.timezone'))
-                : Carbon::now((string) config('app.timezone'));
+                ? Carbon::parse($failedAt)->utc()
+                : Carbon::now()->utc();
 
             $evt->attempts = (int) ($evt->attempts ?? 0) + 1;
+            // Preserve existing device-reported attempt_count when omitted; attempts is always incremented above.
+            // If callers need to overwrite it, they must pass an explicit integer value (for example 0).
             $evt->attempt_count = $attemptCount ?? $evt->attempt_count;
             $evt->last_error = $error;
             $evt->failed_at = $resolvedFailedAt;

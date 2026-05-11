@@ -10,7 +10,9 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 /**
  * App\Models\PrintEvent
  *
- * attempts: server-side counter incremented on each ack/fail report.
+ * attempts: server-side retry counter incremented by PrintEventService::ack() and ::fail().
+ * attempt_count: device-reported attempts from relay fail payloads; only updated when fail() receives a value.
+ * These can diverge, so backend retry logic should read attempts.
  */
 class PrintEvent extends Model
 {
@@ -26,8 +28,8 @@ class PrintEvent extends Model
         'is_acknowledged',
         'acknowledged_at',
         'acknowledged_by_device_id',   // NEW: Track which relay device acked (audit trail)
-        'attempts',
-        'attempt_count',
+        'attempts',                    // Backend-managed retry counter.
+        'attempt_count',               // Device-reported attempts from relay payload.
         'last_error',
         'failed_at',
         'backend_status',              // Task 2.3: backend broadcast lifecycle
@@ -39,8 +41,8 @@ class PrintEvent extends Model
         'meta' => 'array',
         'is_acknowledged' => 'boolean',
         'acknowledged_at' => 'datetime',
-        'attempts' => 'integer',
-        'attempt_count' => 'integer',
+        'attempts' => 'integer',           // Backend-managed retry counter.
+        'attempt_count' => 'integer',      // Device-reported attempts from relay payload.
         'failed_at' => 'datetime',
         'broadcast_at' => 'datetime',
         'retry_count' => 'integer',
