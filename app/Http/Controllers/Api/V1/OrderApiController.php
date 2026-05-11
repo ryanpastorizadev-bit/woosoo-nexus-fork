@@ -16,6 +16,7 @@ use App\Models\Krypton\Menu;
 use App\Models\Krypton\Menu as KryptonMenu;
 use App\Services\Krypton\KryptonContextService;
 use App\Services\PrintEventService;
+use App\Services\PrintTicketService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -178,6 +179,7 @@ class OrderApiController extends Controller
     public function refill(RefillOrderRequest $request, int $orderId)
     {
         $idempotencyKey = trim((string) $request->header('X-Idempotency-Key', ''));
+        $clientSubmissionId = $request->input('client_submission_id');
         $idempotencyScope = null;
         $processingKey = null;
         $responseCacheKey = null;
@@ -388,7 +390,7 @@ class OrderApiController extends Controller
 
             for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
                 try {
-                    DB::transaction(function () use ($deviceOrder, $posItems, $localPayloads, $refillEventMeta) {
+                    DB::transaction(function () use ($deviceOrder, $posItems, $localPayloads, $refillEventMeta, $clientSubmissionId) {
                         // Batch insert all payloads in one query.
                         if (! empty($localPayloads)) {
                             DeviceOrderItems::query()->insert($localPayloads);
@@ -400,15 +402,37 @@ class OrderApiController extends Controller
                         // so it only runs on the attempt that actually commits. Do NOT hoist
                         // it outside the loop — that would fire on every iteration, not just
                         // the successful one.
-                        DB::afterCommit(function () use ($deviceOrder, $refillEventMeta, $posItems) {
+                        DB::afterCommit(function () use ($deviceOrder, $refillEventMeta, $posItems, $clientSubmissionId) {
                             try {
-                                // Create exactly one refill print event after the local mirror commits.
-                                DB::transaction(function () use ($deviceOrder, $refillEventMeta, $posItems) {
-                                    app(PrintEventService::class)->createForOrder(
-                                        $deviceOrder,
-                                        'REFILL',
-                                        $refillEventMeta
-                                    );
+                                // WS2: Create exactly one refill print event after the local mirror commits.
+                                DB::transaction(function () use ($deviceOrder, $refillEventMeta, $posItems, $clientSubmissionId) {
+                                    // Use PrintTicketService for idempotent refill print events
+                                    if ($clientSubmissionId) {
+                                        $printTicketService = app(PrintTicketService::class);
+                                        $printEvent = $printTicketService->createRefillPrintEvent(
+                                            $deviceOrder, 
+                                            $posItems, 
+                                            $clientSubmissionId
+                                        );
+                                        
+                                        // Update device order with print event reference
+                                        $deviceOrder->print_event_id = $printEvent->id;
+                                        $deviceOrder->save();
+                                    } else {
+                                        // Legacy fallback - WARNING: non-idempotent path
+                                        // TODO: Remove this fallback after WS4 is merged and deployed
+                                        Log::warning('Legacy non-idempotent print event path used', [
+                                            'device_order_id' => $deviceOrder->id,
+                                            'event_type' => 'REFILL',
+                                            'reason' => 'No client_submission_id provided'
+                                        ]);
+                                        app(PrintEventService::class)->createForOrder(
+                                            $deviceOrder,
+                                            'REFILL',
+                                            $refillEventMeta
+                                        );
+                                    }
+                                    
                                     // Reload to pick up printEvent relation
                                     $deviceOrder->refresh();
 

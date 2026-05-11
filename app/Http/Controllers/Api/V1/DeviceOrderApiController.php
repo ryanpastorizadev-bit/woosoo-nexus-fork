@@ -109,7 +109,8 @@ class DeviceOrderApiController extends Controller
                     return ['existing' => $existing];
                 }
 
-                $order = app(OrderService::class)->processOrder($device, $this->expandIntentPayload($validatedData));
+                $clientSubmissionId = $validatedData['client_submission_id'] ?? null;
+                $order = app(OrderService::class)->processOrder($device, $this->expandIntentPayload($validatedData), $clientSubmissionId);
 
                 return ['order' => $order];
             });

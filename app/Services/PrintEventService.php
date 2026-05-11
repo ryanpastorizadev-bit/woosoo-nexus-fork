@@ -122,6 +122,10 @@ class PrintEventService
             $evt->updated_at = Carbon::now()->utc();
             $evt->save();
 
+            // WS2: Mark items as printed using PrintTicketService
+            $printTicketService = new PrintTicketService();
+            $printTicketService->markItemsAsPrinted($evt);
+
             // Propagate printed status to the associated device order
             // so clients have a consistent source of truth on the order.
             /** @var \App\Models\DeviceOrder|null $order */

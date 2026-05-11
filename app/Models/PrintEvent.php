@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * App\Models\PrintEvent
@@ -36,6 +37,9 @@ class PrintEvent extends Model
         'backend_status',              // Task 2.3: backend broadcast lifecycle
         'broadcast_at',                // Task 2.3: when the backend last broadcast this event
         'retry_count',                 // Task 2.3: backend re-broadcast counter (≠ device-ack 'attempts')
+        'idempotency_key',             // WS2: Idempotency key for print events
+        'client_submission_id',        // WS2: Client submission ID for tracking
+        'refill_number',               // WS2: Refill number for refill events
     ];
 
     protected $casts = [
@@ -47,6 +51,7 @@ class PrintEvent extends Model
         'failed_at' => UtcDateTimeCast::class,
         'broadcast_at' => UtcDateTimeCast::class,
         'retry_count' => 'integer',
+        'refill_number' => 'integer',
     ];
 
     public function deviceOrder(): BelongsTo
@@ -63,5 +68,15 @@ class PrintEvent extends Model
     public function acknowledgedByDevice(): BelongsTo
     {
         return $this->belongsTo(Device::class, 'acknowledged_by_device_id', 'id');
+    }
+
+    /**
+     * WS2: Relationship to print event items
+     * 
+     * @return HasMany
+     */
+    public function printEventItems(): HasMany
+    {
+        return $this->hasMany(\App\Models\PrintEventItem::class, 'print_event_id', 'id');
     }
 }

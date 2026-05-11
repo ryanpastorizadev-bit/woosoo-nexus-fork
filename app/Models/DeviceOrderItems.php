@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use App\Models\Krypton\Menu;
 use App\Enums\ItemStatus;
 
@@ -23,6 +24,8 @@ class DeviceOrderItems extends Model
         'total' => 'decimal:4',
         'status' => ItemStatus::class,
         'is_refill' => 'boolean',
+        'is_printed' => 'boolean',
+        'printed_at' => 'datetime',
     ];
 
     public function scopeRefills(Builder $query): Builder
@@ -38,5 +41,21 @@ class DeviceOrderItems extends Model
     public function menu()
     {
         return $this->belongsTo(Menu::class, 'menu_id');
+    }
+
+    /**
+     * WS2: Relationship to the print event that printed this item
+     */
+    public function printedByPrintEvent(): BelongsTo
+    {
+        return $this->belongsTo(PrintEvent::class, 'printed_by_print_event_id', 'id');
+    }
+
+    /**
+     * WS2: Relationship to print event items that include this item
+     */
+    public function printEventItems()
+    {
+        return $this->hasMany(PrintEventItem::class, 'device_order_item_id', 'id');
     }
 }

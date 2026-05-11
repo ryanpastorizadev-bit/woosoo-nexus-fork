@@ -46,6 +46,8 @@ Current system has order/refill blockers due to:
 }
 ```
 
+**Note:** Order ID comes from URL path (`/api/device/orders/{orderId}/refills`), not payload.
+
 ### Server Responsibilities
 
 - Package validity
@@ -232,6 +234,73 @@ class DeviceOrderMirror
 | POST | `/api/device/orders/{orderId}/refills` | Submit refill |
 | GET | `/api/device/orders/active` | Get current active order |
 
+#### Unified Response Schemas
+
+**Success Response (All endpoints):**
+```json
+{
+  "success": true,
+  "data": {
+    // Endpoint-specific data
+  },
+  "request_hash": "sha256_of_normalized_payload",
+  "transaction_id": "ordt_abc123",
+  "timestamp": "2026-05-10T12:00:00+08:00"
+}
+```
+
+**Error Response (All endpoints):**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_FAILED",
+    "message": "Package not available for selected guest count",
+    "details": {
+      "field": "package_id",
+      "value": 46,
+      "constraint": "max_guests: 10"
+    }
+  },
+  "request_hash": "sha256_of_normalized_payload",
+  "retryable": false,
+  "timestamp": "2026-05-10T12:00:00+08:00"
+}
+```
+
+**Idempotency Conflict Response:**
+```json
+{
+  "success": false,
+  "error": {
+    "code": "IDEMPOTENCY_CONFLICT",
+    "message": "Idempotency key already used with different payload",
+    "details": {
+      "original_request_hash": "sha256_original",
+      "current_request_hash": "sha256_current",
+      "original_transaction_id": "ordt_original123"
+    }
+  },
+  "request_hash": "sha256_of_normalized_payload",
+  "retryable": false,
+  "timestamp": "2026-05-10T12:00:00+08:00"
+}
+```
+
+**Idempotent Replay Response:**
+```json
+{
+  "success": true,
+  "data": {
+    // Cached original response data
+  },
+  "request_hash": "sha256_of_normalized_payload",
+  "transaction_id": "ordt_cached123",
+  "idempotent_replay": true,
+  "timestamp": "2026-05-10T12:00:00+08:00"
+}
+```
+
 #### Request/Response Examples
 
 **Quote Request:**
@@ -390,6 +459,104 @@ Content-Type: application/json
   - Initial commit idempotency: 24 hours
   - Refill idempotency: session lifetime or 2 hours, whichever is shorter
 - Refill retries for the same submit attempt must reuse the same key until terminal success/failure
+
+#### Idempotency Key Generation (Hardened)
+
+**Client-side Generation:**
+```typescript
+// utils/idempotency.ts
+export function generateIdempotencyKey(): string {
+  // Primary: Crypto API with fallback
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return `woosoo_${crypto.randomUUID()}`
+  }
+  
+  // Fallback 1: timestamp + random
+  if (typeof Date.now === 'function' && typeof Math.random === 'function') {
+    const timestamp = Date.now().toString(36)
+    const random = Math.random().toString(36).slice(2, 15)
+    return `woosoo_${timestamp}_${random}`
+  }
+  
+  // Fallback 2: simple counter (last resort)
+  const counter = (parseInt(localStorage.getItem('woosoo_idem_counter') || '0') + 1).toString(36)
+  localStorage.setItem('woosoo_idem_counter', counter)
+  return `woosoo_fallback_${counter}`
+}
+```
+
+**Key Scope and Storage:**
+```typescript
+// Device-scoped keys prevent cross-device collisions
+const keyScope = `${deviceId}_${sessionId}_${routeFamily}`
+
+// Persisted in localStorage with session cleanup
+localStorage.setItem(`woosoo_idem_${keyScope}`, generatedKey)
+
+// Clear policy:
+// - On successful transaction completion
+// - On session reset
+// - On device re-registration
+// - After TTL expiration
+```
+
+### 1.7 Concurrent Quote Policy (Required)
+
+#### Quote Uniqueness Strategy
+- **Uniqueness constraint**: `(device_id, status = 'active')`
+- **Max active quotes**: 1 per device at any time
+- **New quote invalidation**: Creating new quote automatically cancels previous active quotes
+
+#### Quote Lifecycle
+```sql
+-- New quote creation
+1. UPDATE order_quotes 
+   SET status = 'cancelled' 
+   WHERE device_id = ? AND status = 'active';
+   
+2. INSERT INTO order_quotes (
+   device_id, quote_uuid, status, intent_payload, 
+   expires_at, created_at
+) VALUES (?, ?, 'active', ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE), NOW());
+```
+
+#### Cleanup Policy
+```php
+// Scheduled cleanup every 5 minutes
+class QuoteCleanupJob extends Job
+{
+    public function handle()
+    {
+        // Cancel expired quotes
+        OrderQuote::where('expires_at', '<', now())
+            ->where('status', 'active')
+            ->update(['status' => 'expired']);
+            
+        // Delete old quotes (older than 24 hours)
+        OrderQuote::where('created_at', '<', now()->subHours(24))
+            ->whereIn('status', ['expired', 'cancelled', 'committed'])
+            ->delete();
+    }
+}
+```
+
+#### Client-side Quote Management
+```typescript
+// Auto-invalidate on cart changes
+watch([selectedPackage, guestCount, cartItems], () => {
+  if (currentQuote.value && !isQuoteStale.value) {
+    markQuoteStale()
+  }
+})
+
+// Quote refresh policy
+const refreshQuote = async () => {
+  if (isQuoting.value) return
+  
+  clearCurrentQuote()
+  await quoteInitialOrder()
+}
+```
 
 ### 1.7 Recovery State Machine (Required)
 

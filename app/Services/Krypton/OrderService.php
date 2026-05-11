@@ -18,6 +18,7 @@ use App\Models\Krypton\Table;
 use App\Models\Krypton\Tax;
 use App\Services\BroadcastService;
 use App\Services\PrintEventService;
+use App\Services\PrintTicketService;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -34,7 +35,7 @@ class OrderService
      *
      * @return Order|bool
      */
-    public function processOrder(Device $device, array $attributes)
+    public function processOrder(Device $device, array $attributes, ?string $clientSubmissionId = null)
     {
         // Dual-DB contract reference:
         // See docs/DATABASE_SYNC.md for ownership boundaries, failure modes,
@@ -100,7 +101,7 @@ class OrderService
         $createdOrderId = null;
 
         try {
-            return DB::transaction(function () use ($device, &$createdOrderId) {
+            return DB::transaction(function () use ($device, &$createdOrderId, $clientSubmissionId) {
                 // Create a new order using the provided attributes
                 $order = CreateOrder::run($this->attributes);
 
@@ -148,9 +149,27 @@ class OrderService
 
                 CreateOrderedMenu::run($this->attributes);
 
-                DB::afterCommit(function () use ($deviceOrder) {
+                DB::afterCommit(function () use ($deviceOrder, $clientSubmissionId) {
                     try {
-                        app(PrintEventService::class)->createForOrder($deviceOrder, 'INITIAL');
+                        // WS2: Use PrintTicketService for idempotent print events
+                        if ($clientSubmissionId) {
+                            $printTicketService = app(PrintTicketService::class);
+                            $printEvent = $printTicketService->createInitialPrintEvent($deviceOrder, $clientSubmissionId);
+                            
+                            // Update device order with print event reference
+                            $deviceOrder->print_event_id = $printEvent->id;
+                            $deviceOrder->save();
+                        } else {
+                            // Legacy fallback - WARNING: non-idempotent path
+                            // TODO: Remove this fallback after WS4 is merged and deployed
+                            Log::warning('Legacy non-idempotent print event path used', [
+                                'device_order_id' => $deviceOrder->id,
+                                'event_type' => 'INITIAL',
+                                'reason' => 'No client_submission_id provided'
+                            ]);
+                            app(PrintEventService::class)->createForOrder($deviceOrder, 'INITIAL');
+                        }
+                        
                         $deviceOrder->refresh();
                         PrintOrder::dispatch($deviceOrder);
                     } catch (\Throwable $e) {
