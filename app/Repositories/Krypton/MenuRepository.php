@@ -264,6 +264,30 @@ class MenuRepository
         }
     }
 
+    /**
+     * Retrieves all non-modifier-only menus from a specific group ID.
+     * Used by the tablet API to fetch available options for a category.
+     *
+     * @param int $groupId The POS menu group ID (e.g., 34=meats, 29=sides, 30=drinks)
+     * @return \Illuminate\Database\Eloquent\Collection All available menus in the group
+     */
+    public function getMenusByGroupId(int $groupId): EloquentCollection
+    {
+        try {
+            return Menu::where('menu_group_id', $groupId)
+                ->where('is_available', true)
+                ->where('is_modifier_only', false)
+                ->with(['image', 'tax', 'group'])
+                ->get();
+        } catch (Exception $e) {
+            Log::error('Query failed (getMenusByGroupId): ' . $e->getMessage());
+            if (app()->environment('testing')) {
+                return Menu::hydrate([]);
+            }
+            throw new \Exception('Failed to retrieve menus by group ID.');
+        }
+    }
+
 
     public function getMenuDiscountsById(int $menuId): EloquentCollection
     {

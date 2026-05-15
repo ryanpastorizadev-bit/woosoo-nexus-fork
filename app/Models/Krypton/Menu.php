@@ -191,28 +191,6 @@ class Menu extends Model
      * @param array $codeList The ordered list of codes (e.g., ['P1', 'P2', 'P3'])
      * @return string The CASE WHEN clause for orderByRaw()
      */
-    public static function getModifiers(int $id) {
-        $codes = [
-            46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
-            47 => ['P1', 'P2', 'P3', 'P4', 'P5', 'B1', 'B2', 'B3'],
-            48 => [
-                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10',
-                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
-                'C1', 'C2',
-            ],
-        ];
-
-        if (! isset($codes[$id]) || empty($codes[$id])) {
-            return collect();
-        }
-
-        $codeList = $codes[$id];
-        $query = Menu::with(['image'])
-            ->whereIn('receipt_name', $codeList)
-            ->where('is_modifier_only', true);
-
-        return self::orderByReceiptCodeList($query, $codeList)->get();
-    }
 
     public function getComputedModifiersAttribute()
     {

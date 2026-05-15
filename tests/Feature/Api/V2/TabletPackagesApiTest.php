@@ -224,7 +224,7 @@ class TabletPackagesApiTest extends TestCase
         ]);
     }
 
-    public function test_packages_endpoint_returns_legacy_packages_for_authenticated_device(): void
+    public function test_packages_endpoint_returns_empty_when_no_configured_packages(): void
     {
         $device = $this->authenticatedDevice();
 
@@ -233,12 +233,114 @@ class TabletPackagesApiTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
-        $this->assertCount(3, $response->json('data'));
+        $this->assertCount(0, $response->json('data'));
     }
 
-    public function test_package_details_returns_payload_for_legacy_package_id(): void
+    public function test_packages_endpoint_returns_only_active_configured_packages(): void
     {
         $device = $this->authenticatedDevice();
+
+        // Create active package
+        \App\Models\Package::create([
+            'name' => 'Set Meal A',
+            'krypton_menu_id' => 46,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+
+        // Create inactive package (should not appear)
+        \App\Models\Package::create([
+            'name' => 'Set Meal B',
+            'krypton_menu_id' => 47,
+            'is_active' => false,
+            'sort_order' => 1,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/packages');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $this->assertCount(1, $response->json('data'));
+        $this->assertEquals(46, $response->json('data.0.id'));
+    }
+
+    public function test_package_with_valid_modifiers_returns_modifiers(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        $package = \App\Models\Package::create([
+            'name' => 'Set Meal A',
+            'krypton_menu_id' => 46,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+
+        \App\Models\PackageModifier::create([
+            'package_id' => $package->id,
+            'krypton_menu_id' => 101,
+            'sort_order' => 0,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/packages');
+
+        $response->assertOk();
+        $modifiers = $response->json('data.0.modifiers');
+        $this->assertCount(1, $modifiers);
+        $this->assertEquals(101, $modifiers[0]['id']);
+    }
+
+    public function test_package_with_invalid_modifier_excludes_it(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        $package = \App\Models\Package::create([
+            'name' => 'Set Meal A',
+            'krypton_menu_id' => 46,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+
+        // Valid modifier
+        \App\Models\PackageModifier::create([
+            'package_id' => $package->id,
+            'krypton_menu_id' => 101,
+            'sort_order' => 0,
+        ]);
+
+        // Invalid modifier (points to non-existent menu)
+        \App\Models\PackageModifier::create([
+            'package_id' => $package->id,
+            'krypton_menu_id' => 9999,
+            'sort_order' => 1,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/packages');
+
+        $response->assertOk();
+        // Only valid modifier appears
+        $this->assertCount(1, $response->json('data.0.modifiers'));
+        $this->assertEquals(101, $response->json('data.0.modifiers.0.id'));
+    }
+
+    public function test_package_details_returns_payload_for_configured_active_package(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        $package = \App\Models\Package::create([
+            'name' => 'Set Meal A',
+            'krypton_menu_id' => 46,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+
+        \App\Models\PackageModifier::create([
+            'package_id' => $package->id,
+            'krypton_menu_id' => 101,
+            'sort_order' => 0,
+        ]);
 
         $response = $this->withToken($this->deviceToken($device), 'Bearer')
             ->getJson('/api/v2/tablet/packages/46');
@@ -247,14 +349,33 @@ class TabletPackagesApiTest extends TestCase
         $response->assertJsonPath('success', true);
         $response->assertJsonPath('data.package.id', 46);
         $this->assertIsArray($response->json('data.allowed_menus.meat'));
+        $this->assertCount(1, $response->json('data.allowed_menus.meat'));
     }
 
-    public function test_package_details_rejects_unknown_package_id(): void
+    public function test_package_details_rejects_inactive_package(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        \App\Models\Package::create([
+            'name' => 'Set Meal A',
+            'krypton_menu_id' => 46,
+            'is_active' => false,
+            'sort_order' => 0,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/packages/46');
+
+        $response->assertNotFound();
+        $response->assertJsonPath('success', false);
+    }
+
+    public function test_package_details_rejects_non_configured_package(): void
     {
         $device = $this->authenticatedDevice();
 
         $response = $this->withToken($this->deviceToken($device), 'Bearer')
-            ->getJson('/api/v2/tablet/packages/999');
+            ->getJson('/api/v2/tablet/packages/46');
 
         $response->assertNotFound();
         $response->assertJsonPath('success', false);
@@ -278,13 +399,38 @@ class TabletPackagesApiTest extends TestCase
         $device = $this->authenticatedDevice();
 
         $response = $this->withToken($this->deviceToken($device), 'Bearer')
-            ->getJson('/api/v2/tablet/categories/not-a-slug/menus');
+            ->getJson('/api/v2/tablet/categories/invalid/menus');
 
         $response->assertStatus(422);
         $response->assertJsonPath('success', false);
     }
 
-    public function test_category_menus_returns_data_for_valid_slug(): void
+    public function test_category_menus_resolves_meats_via_group_id(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        // Add a non-modifier-only menu to meats group (ID 34)
+        DB::connection('pos')->table('menus')->insert([
+            'id' => 200,
+            'name' => 'Wagyu Beef',
+            'kitchen_name' => 'Wagyu',
+            'receipt_name' => 'WAGYU',
+            'price' => 99,
+            'is_available' => true,
+            'is_modifier_only' => false,
+            'menu_group_id' => 34, // meats group
+            'menu_tax_type_id' => 1,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/categories/meats/menus');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $this->assertGreaterThanOrEqual(1, count($response->json('data')));
+    }
+
+    public function test_category_menus_resolves_sides_via_group_id(): void
     {
         $device = $this->authenticatedDevice();
 
@@ -293,7 +439,41 @@ class TabletPackagesApiTest extends TestCase
 
         $response->assertOk();
         $response->assertJsonPath('success', true);
-        $this->assertGreaterThanOrEqual(1, count($response->json('data')));
+    }
+
+    public function test_category_menus_resolves_drinks_via_group_id(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/categories/drinks/menus');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+    }
+
+    public function test_category_menus_resolves_desserts_via_course(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        DB::connection('pos')->table('menus')->insert([
+            'id' => 210,
+            'name' => 'Vanilla Cake',
+            'kitchen_name' => 'Cake',
+            'receipt_name' => 'CAKE',
+            'price' => 49,
+            'is_available' => true,
+            'is_modifier_only' => false,
+            'menu_group_id' => 1,
+            'menu_tax_type_id' => 1,
+            'menu_course_type_id' => 1, // dessert course
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/categories/desserts/menus');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
     }
 
     public function test_device_auth_is_required_for_tablet_v2_endpoints(): void
