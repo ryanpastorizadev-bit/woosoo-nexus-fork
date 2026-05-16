@@ -213,8 +213,9 @@ Route::middleware([\App\Http\Middleware\RequestId::class, 'auth:device'])->group
     Route::get('/order/{orderId}/print', [OrderApiController::class, 'print'])->name('api.order.print');
 });
 
-// Printer API routes - allow guest access for emergency mode (optional auth)
-// The PrinterApiController handles optional auth for relay device emergency mode
+// Printer API routes are feature-gated and device-token authenticated.
+// The route file keeps the print-events feature flag ahead of auth so disabled
+// environments return 503 before evaluating relay credentials.
 Route::middleware([\App\Http\Middleware\RequestId::class])->group(function () {
     require __DIR__ . '/api_printer_routes.php';
 });
