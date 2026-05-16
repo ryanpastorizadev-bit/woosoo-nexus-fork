@@ -9,6 +9,7 @@ class Package extends Model
 {
     protected $fillable = [
         'name',
+        'description',
         'krypton_menu_id',
         'is_active',
         'sort_order',

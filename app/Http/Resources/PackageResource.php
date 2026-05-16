@@ -1,5 +1,4 @@
 <?php
-// Audit Fix (2026-04-06): normalize package + modifier payloads for admin package UI.
 
 namespace App\Http\Resources;
 
@@ -29,6 +28,7 @@ class PackageResource extends JsonResource
         return [
             'id' => $this->id,
             'name' => $this->name,
+            'description' => $this->description,
             'krypton_menu_id' => (int) $this->krypton_menu_id,
             'is_active' => (bool) $this->is_active,
             'sort_order' => (int) $this->sort_order,

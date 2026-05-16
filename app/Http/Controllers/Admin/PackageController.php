@@ -1,5 +1,4 @@
 <?php
-// Audit Fix (2026-04-06): add admin package CRUD so package configuration is fully manageable in-app.
 
 namespace App\Http\Controllers\Admin;
 
@@ -9,6 +8,7 @@ use App\Http\Requests\Admin\UpdatePackageRequest;
 use App\Http\Resources\PackageResource;
 use App\Http\Controllers\Api\V2\TabletApiController;
 use App\Models\Krypton\Menu;
+use App\Models\ModifierDescription;
 use App\Models\Package;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +47,8 @@ class PackageController extends Controller
             'description' => 'Manage package definitions and their allowed Krypton modifier menus.',
             'packages' => PackageResource::collection($packages)->resolve(),
             'menuOptions' => $menuOptions,
+            'modifierDescriptions' => ModifierDescription::query()
+                ->pluck('description', 'krypton_menu_id'),
         ]);
     }
 
@@ -57,12 +59,14 @@ class PackageController extends Controller
 
             $package = Package::create([
                 'name' => $data['name'],
+                'description' => $data['description'] ?? null,
                 'krypton_menu_id' => $data['krypton_menu_id'],
                 'is_active' => (bool) ($data['is_active'] ?? true),
                 'sort_order' => (int) ($data['sort_order'] ?? 0),
             ]);
 
             $this->syncModifiers($package, $data['modifiers'] ?? []);
+            $this->syncModifierDescriptions($data['modifiers'] ?? []);
         });
 
         Cache::forget(TabletApiController::PACKAGES_CACHE_KEY);
@@ -77,12 +81,14 @@ class PackageController extends Controller
 
             $package->update([
                 'name' => $data['name'],
+                'description' => $data['description'] ?? null,
                 'krypton_menu_id' => $data['krypton_menu_id'],
                 'is_active' => (bool) ($data['is_active'] ?? false),
                 'sort_order' => (int) ($data['sort_order'] ?? 0),
             ]);
 
             $this->syncModifiers($package, $data['modifiers'] ?? []);
+            $this->syncModifierDescriptions($data['modifiers'] ?? []);
         });
 
         Cache::forget(TabletApiController::PACKAGES_CACHE_KEY);
@@ -113,6 +119,31 @@ class PackageController extends Controller
                 'krypton_menu_id' => (int) $modifier['krypton_menu_id'],
                 'sort_order' => isset($modifier['sort_order']) ? (int) $modifier['sort_order'] : $index,
             ]);
+        }
+    }
+
+    /**
+     * Upsert global, package-independent modifier descriptions keyed by Krypton
+     * menu id. Descriptions are shared across every package that includes the
+     * same modifier, so rows are never deleted here — only created/updated when
+     * a description value is supplied.
+     *
+     * @param array<int, array{krypton_menu_id:int, description?:?string}> $modifiers
+     */
+    private function syncModifierDescriptions(array $modifiers): void
+    {
+        foreach ($modifiers as $modifier) {
+            if (! array_key_exists('description', $modifier)) {
+                continue;
+            }
+
+            $description = $modifier['description'];
+            $description = is_string($description) ? trim($description) : $description;
+
+            ModifierDescription::updateOrCreate(
+                ['krypton_menu_id' => (int) $modifier['krypton_menu_id']],
+                ['description' => $description !== '' ? $description : null],
+            );
         }
     }
 }
