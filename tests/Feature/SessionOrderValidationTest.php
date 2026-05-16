@@ -27,6 +27,15 @@ class SessionOrderValidationTest extends TestCase
             'receipt_name' => 'Test Item',
             'price' => 1.00,
         ]);
+
+        // create-order resolves package_id via Package (krypton_menu_id|id) + is_active.
+        // Tests post package_id=1; seed a matching active package.
+        \App\Models\Package::create([
+            'krypton_menu_id' => 1,
+            'name' => 'Test Package',
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
     }
 
     public function test_order_rejected_for_inactive_session()

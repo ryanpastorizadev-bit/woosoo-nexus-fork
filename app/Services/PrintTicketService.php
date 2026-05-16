@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\DeviceOrder;
-use App\Models\DeviceOrderItem;
+use App\Models\DeviceOrderItems;
 use App\Models\PrintEvent;
 use App\Enums\PrintEventType;
 use Illuminate\Support\Facades\DB;
@@ -128,13 +128,6 @@ class PrintTicketService
                     'printed_by_print_event_id' => $printEvent->id,
                     'print_type' => $printEvent->event_type,
                 ]);
-
-                Log::debug('Marked item as printed', [
-                    'print_event_id' => $printEvent->id,
-                    'device_order_item_id' => $item->id,
-                    'menu_id' => $item->menu_id,
-                    'quantity' => $printEventItem->quantity
-                ]);
             });
 
             Log::info('Marked items as printed', [
@@ -169,7 +162,7 @@ class PrintTicketService
     {
         foreach ($refillItems as $itemData) {
             // Find the corresponding device order item
-            $deviceOrderItem = DeviceOrderItem::where('order_id', $printEvent->device_order_id)
+            $deviceOrderItem = DeviceOrderItems::where('order_id', $printEvent->device_order_id)
                 ->where('menu_id', $itemData['menu_id'])
                 ->where('quantity', $itemData['quantity'])
                 ->where('is_refill', true)

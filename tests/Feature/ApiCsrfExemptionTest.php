@@ -111,7 +111,7 @@ class ApiCsrfExemptionTest extends TestCase
         ]);
 
         // Enable print events for testing
-        config(['app.print_events_enabled' => true]);
+        config(['api.print_events_enabled' => true]);
 
         // Test printer endpoint (should not require CSRF)
         $response = $this->withHeaders([

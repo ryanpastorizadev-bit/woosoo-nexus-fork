@@ -47,15 +47,27 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
             'session_id' => 'test-session',
         ]);
 
+        // RefillOrderRequest only allows items whose Krypton menu group is a
+        // refillable group (meats/sides). Seed a refillable group on the pos
+        // connection and attach the test menus to it.
+        $refillGroupId = \Illuminate\Support\Facades\DB::connection('pos')
+            ->table('menu_groups')->insertGetId(['name' => 'Meats']);
+
         // Create test menus
-        $this->menu1 = Menu::factory()->create(['price' => 10.00]);
-        $this->menu2 = Menu::factory()->create(['price' => 15.00]);
+        $this->menu1 = Menu::factory()->create(['price' => 10.00, 'menu_group_id' => $refillGroupId]);
+        $this->menu2 = Menu::factory()->create(['price' => 15.00, 'menu_group_id' => $refillGroupId]);
     }
+
+    private ?string $deviceToken = null;
 
     private function getAuthHeaders(): array
     {
+        // auth:device is the Sanctum guard (config/auth.php) — must present a
+        // real personal access token, not the raw security_code.
+        $this->deviceToken ??= $this->device->createToken('device')->plainTextToken;
+
         return [
-            'Authorization' => 'Bearer ' . $this->device->security_code,
+            'Authorization' => 'Bearer ' . $this->deviceToken,
             'Accept' => 'application/json',
         ];
     }
@@ -64,7 +76,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
     public function it_requires_client_submission_id_for_idempotent_path()
     {
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -83,7 +95,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         $clientSubmissionId = Str::uuid()->toString();
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -117,7 +129,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         ]);
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -152,7 +164,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         ]);
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -174,7 +186,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
 
         // First refill
         $response1 = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -186,7 +198,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
 
         // Second refill with different submission ID
         $response2 = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu2->id, 'quantity' => 1],
                 ],
@@ -226,7 +238,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
 
         // Same client_submission_id but different device/order should create new submission
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -245,7 +257,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
     {
         $clientSubmissionId = Str::uuid()->toString();
 
-        $response = $this->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+        $response = $this->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
             'items' => [
                 ['menu_id' => $this->menu1->id, 'quantity' => 1],
             ],
@@ -262,7 +274,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         $clientSubmissionId = Str::uuid()->toString();
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/99999/refill", [
+            ->postJson("/api/order/99999/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -279,7 +291,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         $clientSubmissionId = Str::uuid()->toString();
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -330,7 +342,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
 
         // Retry should resume from POS_CREATED state, not call CreateOrderedMenu again
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -410,7 +422,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         ]);
 
         $response = $this->withHeaders($this->getAuthHeaders())
-            ->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+            ->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
                 'items' => [
                     ['menu_id' => $this->menu1->id, 'quantity' => 1],
                 ],
@@ -435,7 +447,7 @@ class OrderApiControllerRefillIdempotencyTest extends TestCase
         $response = $this->withHeaders([
             'Authorization' => 'Bearer ',
             'Accept' => 'application/json',
-        ])->postJson("/api/v1/orders/{$this->deviceOrder->order_id}/refill", [
+        ])->postJson("/api/order/{$this->deviceOrder->order_id}/refill", [
             'items' => [
                 ['menu_id' => $this->menu1->id, 'quantity' => 1],
             ],

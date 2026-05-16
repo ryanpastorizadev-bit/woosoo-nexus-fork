@@ -125,7 +125,9 @@ class RefillSubmission extends Model
                 $this->failed_at = now();
                 break;
         }
-        
+
+        $this->save();
+
         return true;
     }
 

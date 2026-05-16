@@ -159,31 +159,11 @@ docker compose down -v && docker compose up -d --build
 
 ## Package Modifier Sync
 
-The canonical path for seeding/reseeding package modifiers (packages 46, 47, 48) is the
-Artisan command. **Do not use any ad-hoc PHP scripts** — both former scripts
-(`update_package_modifiers.php` and `scripts/update_package_modifiers.php`) have been deleted.
-
-```sh
-# Preview changes without touching the database
-docker compose exec app php artisan woosoo:sync-package-modifiers --dry-run
-
-# Apply (prompts for confirmation)
-docker compose exec app php artisan woosoo:sync-package-modifiers
-
-# Apply non-interactively (CI / deployment scripts)
-docker compose exec app php artisan woosoo:sync-package-modifiers --force
-```
-
-Expected outcome after a successful run:
-
-| Package | Name | Modifier count |
-|---------|------|---------------|
-| 46 | Classic Feast | 5 |
-| 47 | Noble Selection | 8 |
-| 48 | Royal Banquet | 14 |
-
-The command wraps the truncate + insert in a single DB transaction and exits non-zero on
-any failure.
+Package modifiers (for packages 46, 47, 48) are seeded during database migrations and synced
+via `PackageController::syncModifiers()` (triggered by admin package updates). The canonical
+sources are `PackageSeeder` and `app/Http/Controllers/Admin/PackageController.php`.
+Do not use ad-hoc PHP scripts — both former scripts (`update_package_modifiers.php` and
+`scripts/update_package_modifiers.php`) have been deleted.
 
 ---
 
