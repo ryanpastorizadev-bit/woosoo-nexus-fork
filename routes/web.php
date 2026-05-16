@@ -1,5 +1,4 @@
 <?php
-// Audit Fix (2026-04-06): align admin routes with existing Orders page actions and package admin module wiring.
 
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;

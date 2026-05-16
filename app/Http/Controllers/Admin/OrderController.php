@@ -1,7 +1,5 @@
 <?php
 
-// Audit Fix (2026-04-06): restore missing admin order actions and route handlers used by Orders UI.
-
 namespace App\Http\Controllers\Admin;
 
 use App\Enums\OrderStatus;
@@ -102,7 +100,7 @@ class OrderController extends Controller
                 Log::warning('byOrderId: returned order has no items', ['order_id' => $orderId, 'device_order_id' => $deviceOrder->id ?? null]);
             }
         } catch (\Throwable $e) {
-            Log::debug('byOrderId: failed to inspect items', ['order_id' => $orderId, 'error' => $e->getMessage()]);
+            // inspection failure is non-fatal; warning already logged above if items were empty
         }
 
         return response()->json($deviceOrder);

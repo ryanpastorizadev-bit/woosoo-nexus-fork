@@ -296,12 +296,6 @@ class DeviceOrderApiController extends Controller
             throw new InvalidArgumentException("Invalid order payload: package has no valid krypton_menu_id.", 422);
         }
 
-        Log::debug('Package ID resolved', [
-            'submitted_package_id' => $submittedPackageId,
-            'local_package_id' => $package->id,
-            'krypton_menu_id' => $kryptonMenuId,
-        ]);
-
         $modifiers = [];
 
         foreach ($items as $index => $item) {
