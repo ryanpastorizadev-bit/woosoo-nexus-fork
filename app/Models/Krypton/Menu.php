@@ -100,10 +100,14 @@ class Menu extends Model
 
     public function getImageUrlAttribute()
     {
-        // MenuImage is on the default (mysql) connection; Menu is on the pos connection.
-        // with('image') eager-loads against the wrong DB, always yielding null.
-        // Always query MenuImage directly to guarantee the correct connection is used.
-        $imgPath = MenuImage::where('menu_id', $this->id)->value('path');
+        $loadedImage = $this->relationLoaded('image') ? $this->getRelation('image') : null;
+        $imgPath = $loadedImage?->path;
+
+        if (! $this->relationLoaded('image')) {
+            // MenuImage is on the default (mysql) connection; Menu is on the pos connection.
+            // Fall back to a direct lookup only when the image relation was not eager-loaded.
+            $imgPath = MenuImage::where('menu_id', $this->id)->value('path');
+        }
 
         if ($imgPath) {
             return url('storage/' . $imgPath);
@@ -217,7 +221,7 @@ class Menu extends Model
         // Do not restrict by group name so the set meal modifiers include the
         // same menu rows/fields as the regular modifiers endpoint. Preserve
         // the defined code order across both MySQL and SQLite.
-        $query = Menu::with(['image'])
+        $query = Menu::with(['image', 'group', 'category'])
             ->whereIn('receipt_name', $codeList)
             ->where('is_modifier_only', true);
 
@@ -279,7 +283,7 @@ class Menu extends Model
 
         // Fetch package menu models (if present locally)
         $packageIds = array_keys($codes);
-        $packages = Menu::with(['image'])->whereIn('id', $packageIds)->get()->keyBy('id');
+        $packages = Menu::with(['image', 'group', 'category', 'course', 'tax'])->whereIn('id', $packageIds)->get()->keyBy('id');
 
         // Flatten all codes to prefetch modifier menu models as fallback and
         // normalize to uppercase to avoid case-mismatch between POS rows
@@ -290,7 +294,7 @@ class Menu extends Model
         // `getMenuModifiers`) to ensure the package modifiers are selected
         // from the same set the /menus/modifiers endpoint returns. Key the
         // resulting collection by UPPERCASE receipt_name for reliable lookup.
-        $modifierModels = Menu::with(['image', 'group'])
+        $modifierModels = Menu::with(['image', 'group', 'category'])
             ->whereHas('group', function ($q) {
                 $q->where('name', 'Meat Order');
             })

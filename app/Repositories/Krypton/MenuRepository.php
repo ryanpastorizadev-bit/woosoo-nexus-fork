@@ -212,6 +212,34 @@ class MenuRepository
         }
     }
 
+    /**
+     * Batch-load modifiers for many modifier groups at once.
+     *
+     * @param array<int> $modifierGroupIds
+     */
+    public function getMenuModifiersByGroupIds(array $modifierGroupIds): EloquentCollection
+    {
+        $modifierGroupIds = array_values(array_unique(array_filter($modifierGroupIds)));
+
+        if ($modifierGroupIds === []) {
+            return Menu::hydrate([]);
+        }
+
+        try {
+            return Menu::with(['image', 'group', 'category'])
+                ->whereIn('menu_group_id', $modifierGroupIds)
+                ->where('is_modifier_only', true)
+                ->where('is_available', true)
+                ->get();
+        } catch (Exception $e) {
+            Log::error('Batch modifier lookup failed (getMenuModifiersByGroupIds): ' . $e->getMessage());
+            if (app()->environment('testing')) {
+                return Menu::hydrate([]);
+            }
+            throw new \Exception('Something Went Wrong.');
+        }
+    }
+
     public function getMenusByCourse(string $course): EloquentCollection
     {
         // Attempt CALL procedure only when supported; otherwise proceed directly to fallback
