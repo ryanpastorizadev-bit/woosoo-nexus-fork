@@ -27,6 +27,15 @@ class SessionOrderValidationTest extends TestCase
             'receipt_name' => 'Test Item',
             'price' => 1.00,
         ]);
+
+        // create-order resolves package_id via Package (krypton_menu_id|id) + is_active.
+        // Tests post package_id=1; seed a matching active package.
+        \App\Models\Package::create([
+            'krypton_menu_id' => 1,
+            'name' => 'Test Package',
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
     }
 
     public function test_order_rejected_for_inactive_session()
@@ -267,5 +276,55 @@ class SessionOrderValidationTest extends TestCase
 
         $response->assertStatus(503);
         $this->assertFalse($response->json('success'));
+    }
+
+    public function test_order_creation_without_package_id_returns_422_and_does_not_call_order_service()
+    {
+        $this->mockActiveKryptonSession();
+
+        Branch::create(['name' => 'Main', 'location' => 'HQ']);
+
+        $device = Device::create([
+            'name' => 'Device F',
+            'ip_address' => '192.168.1.15',
+            'is_active' => true,
+            'table_id' => 6,
+        ]);
+
+        $token = $device->createToken('test-token')->plainTextToken;
+
+        $payload = [
+            'guest_count' => 1,
+            'subtotal' => 1.00,
+            'tax' => 0.00,
+            'discount' => 0.00,
+            'total_amount' => 1.00,
+            'items' => [
+                [
+                    'menu_id' => 1,
+                    'name' => 'Test Item',
+                    'quantity' => 1,
+                    'price' => 1.00,
+                    'subtotal' => 1.00,
+                ],
+            ],
+        ];
+
+        $this->mock(OrderService::class, function ($mock) {
+            $mock->shouldNotReceive('processOrder');
+        });
+
+        $response = $this->withHeaders([
+            'Authorization' => 'Bearer ' . $token,
+            'Accept' => 'application/json',
+            'X-Idempotency-Key' => \Illuminate\Support\Str::uuid()->toString(),
+        ])->postJson('/api/devices/create-order', $payload);
+
+        $response->assertStatus(422);
+        $errors = $response->json('errors');
+
+        if (is_array($errors)) {
+            $this->assertArrayHasKey('package_id', $errors);
+        }
     }
 }

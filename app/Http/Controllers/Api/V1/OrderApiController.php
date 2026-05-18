@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Actions\Order\CreateOrderedMenu;
+use App\Enums\OrderStatus;
 use App\Events\Order\OrderPrinted;
 use App\Events\Order\OrderStatusUpdated;
 use App\Events\PrintOrder;
@@ -16,6 +17,8 @@ use App\Models\Krypton\Menu;
 use App\Models\Krypton\Menu as KryptonMenu;
 use App\Services\Krypton\KryptonContextService;
 use App\Services\PrintEventService;
+use App\Services\PrintTicketService;
+use App\Services\DurableRefillGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -174,58 +177,40 @@ class OrderApiController extends Controller
      * Persist refill items and dispatch print event.
      *
      * Validates that items are refillable (meats/sides only).
+     * 
+     * State Machine: NEW → PROCESSING → POS_CREATED → MIRRORED → PRINT_EVENT_CREATED → COMPLETED
+     * Durable idempotency via RefillSubmission model prevents duplicate POS inserts on retry.
      */
     public function refill(RefillOrderRequest $request, int $orderId)
     {
-        $idempotencyKey = trim((string) $request->header('X-Idempotency-Key', ''));
-        $idempotencyScope = null;
-        $processingKey = null;
-        $responseCacheKey = null;
-
-        if ($idempotencyKey !== '') {
-            $requestDevice = $request->user();
-            $requestDeviceId = $requestDevice && isset($requestDevice->id) ? (string) $requestDevice->id : 'anonymous';
-            $idempotencyScope = 'refill:'.$requestDeviceId.':'.$orderId.':'.sha1($idempotencyKey);
-            $processingKey = $idempotencyScope.':processing';
-            $responseCacheKey = $idempotencyScope.':response';
-
-            $cachedResponse = Cache::get($responseCacheKey);
-            if (is_array($cachedResponse)) {
-                return response()->json(
-                    $cachedResponse['body'] ?? ['success' => true, 'message' => 'Refill request replayed'],
-                    (int) ($cachedResponse['status'] ?? 200),
-                    ['X-Idempotent-Replay' => 'true']
-                );
-            }
-
-            // Prevent duplicate in-flight refill requests with the same idempotency key.
-            if (! Cache::add($processingKey, 1, now()->addSeconds(30))) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Duplicate refill request already processing',
-                ], 409);
-            }
-        }
+        $clientSubmissionId = $request->input('client_submission_id');
+        $refillGuard = app(DurableRefillGuard::class);
 
         Log::info('[REFILL] Received refill request', [
             'order_id' => $orderId,
             'ip' => $request->ip(),
             'items_count' => count($request->input('items', [])),
+            'client_submission_id' => $clientSubmissionId,
         ]);
+
+        // Validate authenticated device
+        $device = $request->user();
+        if (!$device || !isset($device->id)) {
+            return response()->json(['success' => false, 'message' => 'Device authentication required'], 401);
+        }
 
         // RefillOrderRequest automatically validates items
         $validatedData = $request->validated();
 
-        $device = $request->user();
         $deviceOrder = DeviceOrder::where('order_id', $orderId)
-            ->where('device_id', $device?->id)
+            ->where('device_id', $device->id)
             ->first();
         if (! $deviceOrder) {
             return response()->json(['success' => false, 'message' => 'Order not found'], 404);
         }
 
         // Authorization: ensure device is in the same branch as the order
-        if ($device && isset($device->branch_id) && isset($deviceOrder->branch_id) && $device->branch_id !== $deviceOrder->branch_id) {
+        if (isset($device->branch_id) && isset($deviceOrder->branch_id) && $device->branch_id !== $deviceOrder->branch_id) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
 
@@ -235,6 +220,55 @@ class OrderApiController extends Controller
             return response()->json(['success' => false, 'message' => 'Session mismatch'], 403);
         }
 
+        // Reject refill against terminal orders (completed, cancelled, voided).
+        $terminalStatuses = [OrderStatus::COMPLETED, OrderStatus::CANCELLED, OrderStatus::VOIDED, OrderStatus::ARCHIVED];
+        if (in_array($deviceOrder->status, $terminalStatuses, true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Refill not allowed: order is ' . $deviceOrder->status->value,
+                'error'   => ['code' => 'ORDER_NOT_ACTIVE', 'status' => $deviceOrder->status->value],
+            ], 409);
+        }
+
+        // Legacy fallback: no client_submission_id means non-idempotent path
+        if (!$clientSubmissionId) {
+            Log::warning('[REFILL] Legacy non-idempotent path - no client_submission_id', [
+                'device_id' => $device->id,
+                'order_id' => $orderId,
+            ]);
+            return $this->processLegacyRefill($request, $device, $deviceOrder, $orderId, $validatedData);
+        }
+
+        // === DURABLE IDEMPOTENCY GUARD ===
+        // Check for existing submission or acquire lock
+        $guardResult = $refillGuard->guard($device, $deviceOrder, $clientSubmissionId);
+
+        // Already completed - return cached response
+        if (!$guardResult['proceed'] && $guardResult['response']) {
+            Log::info('[REFILL] Returning cached completed response', [
+                'device_id' => $device->id,
+                'order_id' => $orderId,
+                'client_submission_id' => $clientSubmissionId,
+            ]);
+            return $guardResult['response'];
+        }
+
+        // Currently processing - return 409
+        if (!$guardResult['proceed'] && !$guardResult['response']) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Duplicate refill request already processing',
+                'error' => [
+                    'code' => 'REFILL_IN_PROGRESS',
+                ],
+            ], 409);
+        }
+
+        $submission = $guardResult['submission'];
+        $isNewSubmission = $guardResult['is_new'] ?? true;
+
+        // === STATE: PROCESSING → POS_CREATED ===
+        // Map incoming items
         $incomingItems = $validatedData['items'] ?? [];
         $mappedItems = [];
 
@@ -268,7 +302,7 @@ class OrderApiController extends Controller
 
             if (! $menu) {
                 $menuRef = $it['menu_id'] ?? $name ?? 'unknown';
-
+                $refillGuard->markFailed($submission, "Menu item not found: {$menuRef}");
                 return response()->json(['success' => false, 'message' => "Menu item not found: {$menuRef}"], 422);
             }
 
@@ -295,57 +329,93 @@ class OrderApiController extends Controller
             'items' => $mappedItems,
         ];
 
-        // Run POS-side inserts. Controller handles local mirroring and retries.
-        $attrs['mirror_local'] = false;
-        $created = CreateOrderedMenu::run($attrs);
+        // Check if we already have POS_CREATED state (retry scenario)
+        if ($submission->status === 'POS_CREATED') {
+            Log::info('[REFILL] Resuming from POS_CREATED state', [
+                'submission_id' => $submission->id,
+                'device_id' => $device->id,
+                'order_id' => $orderId,
+            ]);
+            // Use stored POS IDs for verification
+            $posOrderedMenuIds = $submission->pos_ordered_menu_ids ?? [];
+        } else {
+            // Run POS-side inserts
+            $attrs['mirror_local'] = false;
+            
+            try {
+                $created = CreateOrderedMenu::run($attrs);
+            } catch (\Throwable $e) {
+                $refillGuard->markFailed($submission, $e->getMessage());
+                Log::error('[REFILL] POS insert failed', [
+                    'device_id' => $device->id,
+                    'order_id' => $orderId,
+                    'error' => $e->getMessage(),
+                ]);
+                return response()->json(['success' => false, 'message' => 'POS insert failed', 'error' => $e->getMessage()], 500);
+            }
 
-        // Normalize created items: POS returns raw ordered_menu records.
-        // Extract them into objects for consistent handling.
+            // Extract POS ordered_menu IDs for idempotency tracking
+            $posOrderedMenuIds = collect($created)->map(fn ($it) => is_array($it) ? ($it['id'] ?? null) : ($it->id ?? null))->filter()->values()->all();
+
+            // Mark POS_CREATED immediately. If this fails the submission stays in
+            // PROCESSING; the next retry will re-enter this branch and attempt another
+            // POS insert. We therefore treat a marking failure as a hard error so the
+            // client retries — at which point the DB unique constraint will prevent a
+            // second POS insert only if the row was committed. Log loudly so ops can
+            // reconcile manually if the state write fails after POS write succeeded.
+            try {
+                $refillGuard->markPosCreated($submission, $posOrderedMenuIds);
+            } catch (\Throwable $e) {
+                Log::critical('[REFILL] CRITICAL: POS insert succeeded but state mark failed — manual reconciliation may be required', [
+                    'submission_id'     => $submission->id,
+                    'pos_ordered_menu_ids' => $posOrderedMenuIds,
+                    'error'             => $e->getMessage(),
+                ]);
+                return response()->json([
+                    'success'       => false,
+                    'message'       => 'POS insert succeeded but state could not be recorded — please retry',
+                    'pos_created'   => true,
+                    'submission_id' => $submission->id,
+                ], 500);
+            }
+        }
+
+        // Normalize created items for downstream processing
+        // For retries, we need to fetch the POS items again
+        if (!isset($created)) {
+            // Retry scenario: fetch existing POS ordered_menu records
+            $created = $this->fetchPosOrderedMenus($posOrderedMenuIds);
+        }
+
         $posItems = collect($created)->map(function ($it) {
             if (is_array($it)) {
                 return (object) $it;
             }
-
             return $it;
         })->values()->all();
 
         // Guard: if no items created in POS, nothing to mirror locally
         if (empty($posItems)) {
+            $refillGuard->markCompleted($submission, ['success' => true, 'created' => []]);
             return response()->json(['success' => true, 'created' => []]);
         }
 
         try {
             // Build metadata for broadcast (menu names, quantities).
-            // Batch-load menu names to prevent N+1 queries.
             $menuIds = collect($posItems)->pluck('menu_id')->filter()->unique()->values()->all();
-            Log::info('Refill menu IDs extracted', ['menu_ids' => $menuIds]);
-
             $menuNames = ! empty($menuIds)
                 ? Menu::whereIn('id', $menuIds)->pluck('receipt_name', 'id')
                 : collect();
 
-            Log::info('Refill menu names loaded', ['menu_names' => $menuNames->all()]);
-
             $metaItems = collect($posItems)->map(function ($item) use ($menuNames) {
                 $menuId = $item->menu_id;
                 $menuName = $item->name ?? $item->receipt_name ?? $menuNames->get($menuId);
-
-                Log::info('Refill item mapping', [
-                    'menu_id' => $menuId,
-                    'item_name' => $item->name ?? null,
-                    'item_receipt_name' => $item->receipt_name ?? null,
-                    'lookup_name' => $menuNames->get($menuId),
-                    'final_name' => $menuName ?? "Menu #{$menuId}",
-                ]);
-
                 return [
                     'menu_id' => $menuId,
                     'quantity' => $item->quantity ?? 1,
                     'name' => $menuName ?? "Menu #{$menuId}",
                 ];
             })->values()->all();
-
-            Log::info('Refill metaItems constructed', ['meta_items' => $metaItems]);
 
             $refillEventMeta = [
                 'items' => $metaItems,
@@ -354,7 +424,6 @@ class OrderApiController extends Controller
             ];
 
             // Build local payload for each POS item.
-            // Each payload mirrors a POS ordered_menu into local device_order_items.
             $localPayloads = [];
             foreach ($posItems as $pos) {
                 $menuId = $pos->menu_id;
@@ -365,9 +434,9 @@ class OrderApiController extends Controller
                 $total = $pos->total ?? $subtotal;
 
                 $localPayloads[] = [
-                    'order_id' => $deviceOrder->id,      // FK to device_orders.id
-                    'ordered_menu_id' => $pos->id,  // POS ordered_menu record ID
-                    'menu_id' => $menuId,            // FK to menus table
+                    'order_id' => $deviceOrder->id,
+                    'ordered_menu_id' => $pos->id,
+                    'menu_id' => $menuId,
                     'quantity' => $quantity,
                     'price' => $price,
                     'subtotal' => $subtotal,
@@ -380,82 +449,290 @@ class OrderApiController extends Controller
                 ];
             }
 
-            // Mirror POS rows into local device_order_items with retry logic.
-            // POS-first contract: if POS succeeded, local mirror MUST succeed (with retries).
-            // After local success, dispatch print/broadcast events.
-            $maxAttempts = 3;
-            $attempt = 0;
+            // === STATE: POS_CREATED → MIRRORED → PRINT_EVENT_CREATED ===
+            // Check if already mirrored (retry scenario)
+            if ($submission->status === 'MIRRORED' || $submission->status === 'PRINT_EVENT_CREATED' || $submission->status === 'COMPLETED') {
+                Log::info('[REFILL] Resuming from MIRRORED/PRINT_EVENT_CREATED state', [
+                    'submission_id' => $submission->id,
+                    'current_status' => $submission->status,
+                ]);
+            } else {
+                // Mirror POS rows into local device_order_items with retry logic.
+                $maxAttempts = 3;
+                $lastError = null;
 
-            for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-                try {
-                    DB::transaction(function () use ($deviceOrder, $posItems, $localPayloads, $refillEventMeta) {
-                        // Batch insert all payloads in one query.
-                        if (! empty($localPayloads)) {
-                            DeviceOrderItems::query()->insert($localPayloads);
-                        }
-
-                        // DB::afterCommit fires once the outer transaction commits.
-                        // It is intentionally nested inside the retry loop: if the outer
-                        // transaction is retried, this callback is re-registered each time,
-                        // so it only runs on the attempt that actually commits. Do NOT hoist
-                        // it outside the loop — that would fire on every iteration, not just
-                        // the successful one.
-                        DB::afterCommit(function () use ($deviceOrder, $refillEventMeta, $posItems) {
-                            try {
-                                // Create exactly one refill print event after the local mirror commits.
-                                DB::transaction(function () use ($deviceOrder, $refillEventMeta, $posItems) {
-                                    app(PrintEventService::class)->createForOrder(
-                                        $deviceOrder,
-                                        'REFILL',
-                                        $refillEventMeta
-                                    );
-                                    // Reload to pick up printEvent relation
-                                    $deviceOrder->refresh();
-
-                                    // Queue broadcasts until the print-event transaction commits,
-                                    // so listeners never observe uncommitted state.
-                                    $freshOrder = $deviceOrder->fresh(['items.menu', 'device.table', 'table', 'serviceRequests']);
-                                    DB::afterCommit(function () use ($deviceOrder, $posItems, $freshOrder) {
-                                        PrintRefill::dispatch($deviceOrder, $posItems);
-
-                                        // Broadcast the complete updated order to admin.orders
-                                        // so the Refill Monitor receives all items immediately.
-                                        if ($freshOrder) {
-                                            OrderStatusUpdated::dispatch($freshOrder);
-                                        }
-                                    });
-                                });
-                            } catch (\Throwable $e) {
-                                report($e);
+                for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+                    try {
+                        DB::transaction(function () use ($deviceOrder, $localPayloads) {
+                            if (! empty($localPayloads)) {
+                                DeviceOrderItems::query()->insert($localPayloads);
                             }
                         });
-                    });
 
-                    // Success — break retry loop
-                    break;
-                } catch (\Throwable $e) {
-                    if ($attempt >= $maxAttempts) {
-                        Log::error('Refill local mirror failed after max retries', [
+                        // Mark MIRRORED state
+                        $refillGuard->markMirrored($submission);
+                        $lastError = null;
+                        break;
+                    } catch (\Throwable $e) {
+                        $lastError = $e->getMessage();
+                        if ($attempt >= $maxAttempts) {
+                            Log::error('[REFILL] Local mirror failed after max retries', [
+                                'order_id' => $orderId,
+                                'device_order_id' => $deviceOrder->id,
+                                'attempt' => $attempt,
+                                'error' => $e->getMessage(),
+                            ]);
+                            break;
+                        }
+                        Log::warning('[REFILL] Local mirror retry', [
                             'order_id' => $orderId,
                             'device_order_id' => $deviceOrder->id,
                             'attempt' => $attempt,
                             'error' => $e->getMessage(),
                         ]);
-                        throw $e;
                     }
-                    // Log retry attempt (no sleep; immediate retry)
-                    Log::warning('Refill local mirror retry', [
-                        'order_id' => $orderId,
-                        'device_order_id' => $deviceOrder->id,
-                        'attempt' => $attempt,
-                        'error' => $e->getMessage(),
-                    ]);
+                }
+
+                // Even if local mirror failed, we still have POS_CREATED state
+                // Client can retry and we'll resume from MIRRORED step
+                if ($lastError) {
+                    // Mark as failed so client can retry
+                    $refillGuard->markFailed($submission, "Local mirror failed: {$lastError}");
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to persist refill locally',
+                        'error' => $lastError,
+                        'pos_created' => true,
+                        'submission_id' => $submission->id,
+                    ], 500);
                 }
             }
 
-            // Fetch fresh order with relationships to return via DeviceOrderResource
-            $freshOrder = DeviceOrder::with(['items.menu', 'table', 'device'])->find($deviceOrder->id);
+            // Create print event if not already done
+            $printEvent = null;
+            if ($submission->status !== 'PRINT_EVENT_CREATED' && $submission->status !== 'COMPLETED') {
+                try {
+                    DB::transaction(function () use ($deviceOrder, $posItems, $clientSubmissionId, $refillEventMeta, &$printEvent) {
+                        $printTicketService = app(PrintTicketService::class);
+                        $printEvent = $printTicketService->createRefillPrintEvent(
+                            $deviceOrder,
+                            $posItems,
+                            $clientSubmissionId
+                        );
 
+                        $deviceOrder->print_event_id = $printEvent->id;
+                        $deviceOrder->save();
+                    });
+
+                    // Mark PRINT_EVENT_CREATED state
+                    if ($printEvent) {
+                        $refillGuard->markPrintEventCreated($submission, $printEvent);
+                    }
+                } catch (\Throwable $e) {
+                    Log::error('[REFILL] Print event creation failed', [
+                        'submission_id' => $submission->id,
+                        'error' => $e->getMessage(),
+                    ]);
+                    // Non-fatal: can continue without print event
+                }
+            }
+
+            // Dispatch events — only on first-time submission to prevent broadcast
+            // replay when a retry resumes from MIRRORED or PRINT_EVENT_CREATED state.
+            $deviceOrder->refresh();
+            $freshOrder = $deviceOrder->fresh(['items.menu', 'device.table', 'table', 'serviceRequests']);
+
+            if ($isNewSubmission) {
+                try {
+                    PrintRefill::dispatch($deviceOrder, $posItems);
+                    if ($freshOrder) {
+                        OrderStatusUpdated::dispatch($freshOrder);
+                    }
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            }
+
+            // === STATE: COMPLETED ===
+            $responseBody = [
+                'success' => true,
+                'order' => $freshOrder ? DeviceOrderResource::make($freshOrder) : null,
+                'created' => $created,
+            ];
+
+            $refillGuard->markCompleted($submission, $responseBody);
+
+            return response()->json($responseBody);
+        } catch (\Throwable $th) {
+            report($th);
+            $refillGuard->markFailed($submission, $th->getMessage());
+            return response()->json(['success' => false, 'message' => 'Failed to persist refill', 'error' => $th->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Legacy non-idempotent refill path (no client_submission_id)
+     */
+    private function processLegacyRefill(RefillOrderRequest $request, $device, DeviceOrder $deviceOrder, int $orderId, array $validatedData): \Illuminate\Http\JsonResponse
+    {
+        $idempotencyKey = trim((string) $request->header('X-Idempotency-Key', ''));
+        $idempotencyScope = null;
+        $processingKey = null;
+        $responseCacheKey = null;
+
+        if ($idempotencyKey !== '') {
+            $requestDevice = $request->user();
+            $requestDeviceId = $requestDevice && isset($requestDevice->id) ? (string) $requestDevice->id : 'anonymous';
+            $idempotencyScope = 'refill:'.$requestDeviceId.':'.$orderId.':'.sha1($idempotencyKey);
+            $processingKey = $idempotencyScope.':processing';
+            $responseCacheKey = $idempotencyScope.':response';
+
+            $cachedResponse = Cache::get($responseCacheKey);
+            if (is_array($cachedResponse)) {
+                return response()->json(
+                    $cachedResponse['body'] ?? ['success' => true, 'message' => 'Refill request replayed'],
+                    (int) ($cachedResponse['status'] ?? 200),
+                    ['X-Idempotent-Replay' => 'true', 'X-Legacy-Path' => 'true']
+                );
+            }
+
+            if (! Cache::add($processingKey, 1, now()->addSeconds(30))) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Duplicate refill request already processing',
+                ], 409);
+            }
+        }
+
+        // Original legacy processing (kept for backward compatibility)
+        $incomingItems = $validatedData['items'] ?? [];
+        $mappedItems = [];
+
+        foreach ($incomingItems as $i => $it) {
+            $name = trim(strval($it['name'] ?? ''));
+            $quantity = intval($it['quantity'] ?? 1);
+
+            $menu = null;
+            if (! empty($it['menu_id']) && isset($it['price'])) {
+                $menu = (object) ['id' => $it['menu_id'], 'price' => $it['price']];
+            } elseif (! empty($it['menu_id'])) {
+                try {
+                    $menu = KryptonMenu::find($it['menu_id']);
+                } catch (\Throwable $_e) {
+                    $menu = null;
+                }
+            }
+
+            if (! $menu && ! empty($name)) {
+                try {
+                    $menu = KryptonMenu::whereRaw('LOWER(receipt_name) = ?', [strtolower($name)])->first()
+                        ?? KryptonMenu::whereRaw('LOWER(name) = ?', [strtolower($name)])->first();
+                } catch (\Throwable $_e) {
+                    $menu = null;
+                }
+            }
+
+            if (! $menu) {
+                $menuRef = $it['menu_id'] ?? $name ?? 'unknown';
+                return response()->json(['success' => false, 'message' => "Menu item not found: {$menuRef}"], 422);
+            }
+
+            $mappedItems[] = [
+                'menu_id' => $menu->id,
+                'quantity' => $quantity,
+                'index' => $it['index'] ?? ($i + 1),
+                'seat_number' => $it['seat_number'] ?? 1,
+                'note' => $it['note'] ?? 'Refill',
+                'price' => $menu->price,
+            ];
+        }
+
+        $kctx = app(KryptonContextService::class);
+        $kdata = $kctx->getData();
+        $orderCheckId = $this->resolvePosOrderCheckId($orderId);
+
+        $attrs = [
+            'order_id' => $orderId,
+            'order_check_id' => $orderCheckId,
+            'employee_log_id' => $kdata['employee_log_id'] ?? null,
+            'device_order_id' => $deviceOrder->id,
+            'items' => $mappedItems,
+            'mirror_local' => false,
+        ];
+
+        $created = CreateOrderedMenu::run($attrs);
+
+        $posItems = collect($created)->map(function ($it) {
+            return is_array($it) ? (object) $it : $it;
+        })->values()->all();
+
+        if (empty($posItems)) {
+            return response()->json(['success' => true, 'created' => []]);
+        }
+
+        try {
+            $menuIds = collect($posItems)->pluck('menu_id')->filter()->unique()->values()->all();
+            $menuNames = ! empty($menuIds) ? Menu::whereIn('id', $menuIds)->pluck('receipt_name', 'id') : collect();
+
+            $metaItems = collect($posItems)->map(function ($item) use ($menuNames) {
+                $menuId = $item->menu_id;
+                $menuName = $item->name ?? $item->receipt_name ?? $menuNames->get($menuId);
+                return [
+                    'menu_id' => $menuId,
+                    'quantity' => $item->quantity ?? 1,
+                    'name' => $menuName ?? "Menu #{$menuId}",
+                ];
+            })->values()->all();
+
+            $refillEventMeta = [
+                'items' => $metaItems,
+                'refill_count' => count($mappedItems),
+                'refilled_at' => now()->toIso8601String(),
+            ];
+
+            $localPayloads = [];
+            foreach ($posItems as $pos) {
+                $localPayloads[] = [
+                    'order_id' => $deviceOrder->id,
+                    'ordered_menu_id' => $pos->id,
+                    'menu_id' => $pos->menu_id,
+                    'quantity' => $pos->quantity ?? 1,
+                    'price' => $pos->price ?? ($pos->unit_price ?? 0.00),
+                    'subtotal' => $pos->sub_total ?? ($pos->subtotal ?? 0),
+                    'tax' => $pos->tax ?? 0.00,
+                    'total' => $pos->total ?? 0,
+                    'notes' => isset($pos->note) && trim((string) $pos->note) !== '' ? $pos->note : 'Refill',
+                    'seat_number' => $pos->seat_number ?? 1,
+                    'index' => $pos->index ?? 1,
+                    'is_refill' => true,
+                ];
+            }
+
+            // Legacy local mirror + print event
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                try {
+                    DB::transaction(function () use ($deviceOrder, $localPayloads, $refillEventMeta) {
+                        if (! empty($localPayloads)) {
+                            DeviceOrderItems::query()->insert($localPayloads);
+                        }
+
+                        DB::afterCommit(function () use ($deviceOrder, $refillEventMeta) {
+                            try {
+                                app(PrintEventService::class)->createForOrder($deviceOrder, 'REFILL', $refillEventMeta);
+                            } catch (\Throwable $e) {
+                                report($e);
+                            }
+                        });
+                    });
+                    break;
+                } catch (\Throwable $e) {
+                    if ($attempt >= 3) {
+                        throw $e;
+                    }
+                }
+            }
+
+            $freshOrder = DeviceOrder::with(['items.menu', 'table', 'device'])->find($deviceOrder->id);
             $responseBody = [
                 'success' => true,
                 'order' => $freshOrder ? DeviceOrderResource::make($freshOrder) : null,
@@ -463,21 +740,37 @@ class OrderApiController extends Controller
             ];
 
             if ($responseCacheKey) {
-                Cache::put($responseCacheKey, [
-                    'status' => 200,
-                    'body' => $responseBody,
-                ], now()->addMinutes(10));
+                Cache::put($responseCacheKey, ['status' => 200, 'body' => $responseBody], now()->addMinutes(10));
             }
 
             return response()->json($responseBody);
         } catch (\Throwable $th) {
             report($th);
-
             return response()->json(['success' => false, 'message' => 'Failed to persist refill', 'error' => $th->getMessage()], 500);
         } finally {
             if ($processingKey) {
                 Cache::forget($processingKey);
             }
+        }
+    }
+
+    /**
+     * Fetch POS ordered_menu records by IDs (for retry scenarios)
+     */
+    private function fetchPosOrderedMenus(array $orderedMenuIds): array
+    {
+        if (empty($orderedMenuIds)) {
+            return [];
+        }
+
+        try {
+            return \App\Models\Krypton\OrderedMenu::whereIn('id', $orderedMenuIds)->get()->all();
+        } catch (\Throwable $e) {
+            Log::warning('[REFILL] Failed to fetch POS ordered_menus for retry', [
+                'ordered_menu_ids' => $orderedMenuIds,
+                'error' => $e->getMessage(),
+            ]);
+            return [];
         }
     }
 

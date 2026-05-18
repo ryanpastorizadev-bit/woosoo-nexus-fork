@@ -165,12 +165,12 @@ class PrintEventBroadcastContractTest extends TestCase
         $printOrderChannels = $printOrderEvent->broadcastOn();
         $printRefillChannels = $printRefillEvent->broadcastOn();
 
-        // Assert: Both use 'admin.print' channel
+        // Assert: Both use 'admin.orders' channel
         $this->assertCount(1, $printOrderChannels);
-        $this->assertEquals('admin.print', $printOrderChannels[0]->name);
+        $this->assertEquals('admin.orders', $printOrderChannels[0]->name);
         
         $this->assertCount(1, $printRefillChannels);
-        $this->assertEquals('admin.print', $printRefillChannels[0]->name);
+        $this->assertEquals('admin.orders', $printRefillChannels[0]->name);
     }
 
     /**

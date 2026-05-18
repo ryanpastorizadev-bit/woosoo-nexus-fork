@@ -100,11 +100,13 @@ class Menu extends Model
 
     public function getImageUrlAttribute()
     {
-        // Use already-loaded image relation to avoid N+1 queries on collections.
-        if ($this->relationLoaded('image')) {
-            $imgPath = $this->image?->path ?? null;
-        } else {
-            $imgPath = MenuImage::where('menu_id', $this->id)->first()?->path ?? null;
+        $loadedImage = $this->relationLoaded('image') ? $this->getRelation('image') : null;
+        $imgPath = $loadedImage?->path;
+
+        if (! $this->relationLoaded('image')) {
+            // MenuImage is on the default (mysql) connection; Menu is on the pos connection.
+            // Fall back to a direct lookup only when the image relation was not eager-loaded.
+            $imgPath = MenuImage::where('menu_id', $this->id)->value('path');
         }
 
         if ($imgPath) {
@@ -126,6 +128,7 @@ class Menu extends Model
             'beef-bulgogi' => 'beef-bulgogi.png',
             'candied-sweet-potato-goguma-mattang' => 'candied-sweet-potato-goguma-mattang.png',
             'citrus-burst-pepper-samgyupsal' => 'citrus-burst-pepper-samgyupsal.png',
+            'dak-galbi' => 'dak-galbi-plain-or-spicy.png',
             'dak-galbi-plain-or-spicy' => 'dak-galbi-plain-or-spicy.png',
             'gamja-jorim-korean-braised-baby-potatoes' => 'gamja-jorim-korean-braised-baby-potatoes.png',
             'golden-mushroom-beef-roll' => 'golden-mushroom-beef-roll.png',
@@ -140,7 +143,12 @@ class Menu extends Model
             'korean-pickled-radish' => 'korean-pickled-radish.png',
             'korean-potato-salad-gamja-salad' => 'korean-potato-salad-gamja-salad.png',
             'lettuce' => 'lettuce.png',
+            'moksal' => 'moksal-pork-neck.png',
             'moksal-pork-neck' => 'moksal-pork-neck.png',
+            'citrus-burst-woosamgyup' => 'asian-gochu-woosamgyup.png',
+            'secret-spice-samgyupsal' => 'samgyupsal.png',
+            'secret-spice-woosamgyup' => 'woosamgyup.png',
+            'spicy-sesame-woosamgyup' => 'woosamgyup.png',
             'pickled-cucumber' => 'pickled-cucumber.png',
             'plain-samgyupsal' => 'plain-samgyupsal.png',
             'samgyupsal' => 'samgyupsal.png',
@@ -187,28 +195,6 @@ class Menu extends Model
      * @param array $codeList The ordered list of codes (e.g., ['P1', 'P2', 'P3'])
      * @return string The CASE WHEN clause for orderByRaw()
      */
-    public static function getModifiers(int $id) {
-        $codes = [
-            46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
-            47 => ['P1', 'P2', 'P3', 'P4', 'P5', 'B1', 'B2', 'B3'],
-            48 => [
-                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9',
-                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10',
-                'C1',
-            ],
-        ];
-
-        if (! isset($codes[$id]) || empty($codes[$id])) {
-            return collect();
-        }
-
-        $codeList = $codes[$id];
-        $query = Menu::with(['image'])
-            ->whereIn('receipt_name', $codeList)
-            ->where('is_modifier_only', true);
-
-        return self::orderByReceiptCodeList($query, $codeList)->get();
-    }
 
     public function getComputedModifiersAttribute()
     {
@@ -219,9 +205,9 @@ class Menu extends Model
             46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
             47 => ['P1', 'P2', 'P3', 'P4', 'P5', 'B1', 'B2', 'B3'],
             48 => [
-                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9',
-                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10',
-                'C1',
+                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10',
+                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
+                'C1', 'C2',
             ],
         ];
 
@@ -235,7 +221,7 @@ class Menu extends Model
         // Do not restrict by group name so the set meal modifiers include the
         // same menu rows/fields as the regular modifiers endpoint. Preserve
         // the defined code order across both MySQL and SQLite.
-        $query = Menu::with(['image'])
+        $query = Menu::with(['image', 'group', 'category'])
             ->whereIn('receipt_name', $codeList)
             ->where('is_modifier_only', true);
 
@@ -248,9 +234,9 @@ class Menu extends Model
      * Uses a CASE expression for portability (SQLite test DB + MySQL runtime)
      * while preserving the exact incoming codeList order.
      *
-     * @param \\Illuminate\\Database\\Eloquent\\Builder $query
+     * @param \Illuminate\Database\Eloquent\Builder $query
      * @param array<int, string> $codeList
-     * @return \\Illuminate\\Database\\Eloquent\\Builder
+     * @return \Illuminate\Database\Eloquent\Builder
      */
     protected static function orderByReceiptCodeList(Builder $query, array $codeList): Builder
     {
@@ -289,15 +275,15 @@ class Menu extends Model
             46 => ['P1', 'P2', 'P3', 'P4', 'P5'],
             47 => ['P1', 'P2', 'P3', 'P4', 'P5', 'B1', 'B2', 'B3'],
             48 => [
-                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9',
-                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9', 'B10',
-                'C1',
+                'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9', 'P10',
+                'B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8', 'B9',
+                'C1', 'C2',
             ],
         ];
 
         // Fetch package menu models (if present locally)
         $packageIds = array_keys($codes);
-        $packages = Menu::with(['image'])->whereIn('id', $packageIds)->get()->keyBy('id');
+        $packages = Menu::with(['image', 'group', 'category', 'course', 'tax'])->whereIn('id', $packageIds)->get()->keyBy('id');
 
         // Flatten all codes to prefetch modifier menu models as fallback and
         // normalize to uppercase to avoid case-mismatch between POS rows
@@ -308,7 +294,7 @@ class Menu extends Model
         // `getMenuModifiers`) to ensure the package modifiers are selected
         // from the same set the /menus/modifiers endpoint returns. Key the
         // resulting collection by UPPERCASE receipt_name for reliable lookup.
-        $modifierModels = Menu::with(['image', 'group'])
+        $modifierModels = Menu::with(['image', 'group', 'category'])
             ->whereHas('group', function ($q) {
                 $q->where('name', 'Meat Order');
             })

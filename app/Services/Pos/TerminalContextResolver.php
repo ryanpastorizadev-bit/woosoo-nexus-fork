@@ -48,6 +48,40 @@ class TerminalContextResolver
             ->where('terminal_id', $terminalId)
             ->first();
 
+        // Look up cash tray session for the current session and terminal
+        $cashTraySession = null;
+        if ($session && $terminalSession) {
+            $cashTraySession = DB::connection('pos')
+                ->table('cash_tray_sessions')
+                ->where('session_id', $session->id)
+                ->where('terminal_session_id', $terminalSession->id)
+                ->where('is_open', 1)
+                ->orderByDesc('id')
+                ->first();
+
+            // Fallback: any open cash tray for this session and terminal
+            if (! $cashTraySession) {
+                $cashTraySession = DB::connection('pos')
+                    ->table('cash_tray_sessions')
+                    ->where('session_id', $session->id)
+                    ->where('terminal_id', $terminalId)
+                    ->where('is_open', 1)
+                    ->orderByDesc('id')
+                    ->first();
+            }
+
+            // Final fallback: most recent open cash tray for this terminal
+            if (! $cashTraySession) {
+                $cashTraySession = DB::connection('pos')
+                    ->table('cash_tray_sessions')
+                    ->where('session_id', $session->id)
+                    ->where('terminal_id', $terminalId)
+                    ->where('is_open', 1)
+                    ->orderByDesc('id')
+                    ->first();
+            }
+        }
+
         return [
             'session_id'          => (int) ($session->id ?? 0),
             'terminal_session_id' => $terminalSession ? (int) $terminalSession->id : null,
@@ -56,7 +90,7 @@ class TerminalContextResolver
             'revenue_id'          => (int) ($terminalService->revenue_id ?? 1),
             'service_type_id'     => (int) ($terminalService->service_type_id ?? 1),
             'terminal_service_id' => (int) ($terminalService->id ?? 1),
-            'cash_tray_session_id' => null,
+            'cash_tray_session_id' => $cashTraySession ? (int) $cashTraySession->id : null,
         ];
     }
 }

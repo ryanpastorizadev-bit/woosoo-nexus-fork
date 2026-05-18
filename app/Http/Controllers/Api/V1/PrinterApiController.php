@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\PrintEventStatus;
 use App\Events\Order\OrderPrinted;
 use App\Events\PrintOrder;
 use App\Http\Controllers\Controller;
@@ -59,7 +60,11 @@ class PrinterApiController extends Controller
 
         $deviceOrder->is_printed = true;
         $printedAtInput = $request->input('printed_at');
-        $deviceOrder->printed_at = $printedAtInput ? Carbon::parse($printedAtInput)->utc() : Carbon::now()->utc();
+        if ($printedAtInput) {
+            $deviceOrder->printed_at = Carbon::parse($printedAtInput);
+        } else {
+            $deviceOrder->printed_at = Carbon::now();
+        }
         $deviceOrder->printed_by = $request->input('printer_id');
         $deviceOrder->save();
 
@@ -156,7 +161,11 @@ class PrinterApiController extends Controller
     {
         $orderIds = $request->input('order_ids');
         $printedAtInput = $request->input('printed_at');
-        $printedAt = $printedAtInput ? Carbon::parse($printedAtInput)->utc() : Carbon::now()->utc();
+        if ($printedAtInput) {
+            $printedAt = Carbon::parse($printedAtInput);
+        } else {
+            $printedAt = Carbon::now();
+        }
         $printerId = $request->input('printer_id');
 
         $updated = [];
@@ -225,6 +234,7 @@ class PrinterApiController extends Controller
         ]);
 
         $eventsQuery = PrintEvent::where('is_acknowledged', false)
+            ->whereIn('status', [PrintEventStatus::PENDING->value, PrintEventStatus::RESERVED->value])
             ->when($since, fn ($q) => $q->where('created_at', '>', $since))
             ->with(['deviceOrder', 'deviceOrder.items.menu', 'deviceOrder.table'])
             ->orderBy('created_at', 'asc');
@@ -390,9 +400,25 @@ class PrinterApiController extends Controller
     {
         // Optional auth for relay device emergency mode
         $device = Auth::guard('device')->user();
+        $bearerToken = $request->bearerToken();
 
         $error = $request->input('error');
         $appVersion = $request->input('app_version');
+        $failedAt = $request->input('failed_at');
+        $attemptCount = $request->has('attempt_count') ? $request->integer('attempt_count') : null;
+
+        if ($bearerToken && ! $device) {
+            Log::warning('[FAIL] Device auth token rejected', [
+                'print_event_id' => $id,
+                'has_auth_header' => true,
+                'path' => $request->path(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unauthenticated device token',
+            ], 401);
+        }
 
         try {
             $evt = $this->printEventService->getById($id);
@@ -417,15 +443,23 @@ class PrinterApiController extends Controller
             ]);
         }
 
-        $res = $this->printEventService->fail($id, $error, $device?->id);
+        $res = $this->printEventService->fail(
+            $id,
+            $error,
+            $device?->id,
+            $failedAt,
+            $attemptCount,
+        );
 
         // Update device heartbeat
-        $device->last_seen_at = now();
-        if ($appVersion) {
-            $device->app_version = $appVersion;
+        if ($device) {
+            $device->last_seen_at = now();
+            if ($appVersion) {
+                $device->app_version = $appVersion;
+            }
+            /** @var \App\Models\Device $device */
+            $device->save();
         }
-        /** @var \App\Models\Device $device */
-        $device->save();
 
         return response()->json([
             'success' => true,
@@ -433,8 +467,55 @@ class PrinterApiController extends Controller
             'data' => [
                 'id' => $res['print_event']->id,
                 'attempts' => $res['print_event']->attempts,
+                'attempt_count' => $res['print_event']->attempt_count,
+                'failed_at' => optional($res['print_event']->failed_at)?->toIso8601String(),
                 'was_updated' => $res['was_updated'],
-                'acknowledged_by' => $res['print_event']->acknowledgedByDevice?->name ?? $device->name,
+                'acknowledged_by' => $res['print_event']->acknowledgedByDevice?->name ?? $device?->name ?? 'guest',
+            ],
+        ]);
+    }
+
+    /**
+     * Atomically reserve a print event for the calling bridge device.
+     * Prevents multi-bridge duplicate printing.
+     * Returns 200 on success, 409 if already reserved/printing/printed.
+     */
+    public function reservePrintEvent(int $id)
+    {
+        $device = Auth::guard('device')->user();
+
+        if (! $device) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated'], 401);
+        }
+
+        try {
+            $evt = $this->printEventService->getById($id);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'Event not found'], 404);
+        }
+
+        $this->authorizeDeviceForEvent($evt, $device);
+
+        $res = $this->printEventService->reserve($id, $device->id);
+
+        if (! $res['reserved']) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Print event already claimed',
+                'data' => [
+                    'id' => $res['print_event']->id,
+                    'status' => $res['print_event']->status?->value ?? $res['print_event']->status,
+                ],
+            ], 409);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Reserved',
+            'data' => [
+                'id' => $res['print_event']->id,
+                'status' => $res['print_event']->status?->value ?? $res['print_event']->status,
+                'reserved_at' => $res['print_event']->reserved_at?->toIso8601String(),
             ],
         ]);
     }

@@ -84,6 +84,9 @@ abstract class TestCase extends BaseTestCase
         $_ENV['APP_ENV'] = 'testing';
         $_SERVER['APP_ENV'] = 'testing';
 
+        // Skip Vite manifest resolution in tests — assets are not built locally.
+        $this->withoutVite();
+
         // Always run in tests — TestCase.php is only used by the test suite.
         // The original env-detection guard was unreliable in Docker (APP_ENV=production
         // at bootstrap even during phpunit runs), causing the pos connection to remain
@@ -344,6 +347,11 @@ abstract class TestCase extends BaseTestCase
                     $table->integer('seat_number')->nullable();
                     $table->integer('index')->nullable();
                     $table->boolean('is_refill')->default(false);
+                    $table->boolean('is_printed')->default(false);
+                    $table->timestamp('printed_at')->nullable();
+                    $table->unsignedBigInteger('printed_by_print_event_id')->nullable();
+                    $table->string('print_type')->nullable();
+                    $table->uuid('client_submission_id')->nullable();
                     $table->timestamps();
                     $table->softDeletes();
                 });
@@ -394,6 +402,11 @@ abstract class TestCase extends BaseTestCase
                 $table->integer('seat_number')->nullable();
                 $table->integer('index')->nullable();
                 $table->boolean('is_refill')->default(false);
+                $table->boolean('is_printed')->default(false);
+                $table->timestamp('printed_at')->nullable();
+                $table->unsignedBigInteger('printed_by_print_event_id')->nullable();
+                $table->string('print_type')->nullable();
+                $table->uuid('client_submission_id')->nullable();
                 $table->timestamps();
                 $table->softDeletes();
             });
@@ -464,5 +477,60 @@ abstract class TestCase extends BaseTestCase
         Cache::put(self::TEST_KRYPTON_SESSION_CACHE_KEY, $sessionId, now()->addHour());
 
         return $sessionId;
+    }
+
+    /**
+     * Drain any open transactions to prevent cascading test failures
+     * when a test leaves the database mid-transaction. SQLite savepoint
+     * desync can cause "There is already an active transaction" on the next test.
+     */
+    private function drainOpenTransactions(): void
+    {
+        foreach (['testing', 'pos'] as $connection) {
+            try {
+                $conn = DB::connection($connection);
+                $level = 0;
+                // Get the transaction level safely
+                try {
+                    $level = $conn->transactionLevel();
+                } catch (\Throwable) {
+                    // If we can't get the level, assume we need to purge
+                    $level = 1;
+                }
+                
+                // Rollback all nested transactions/savepoints
+                while ($level > 0) {
+                    try {
+                        $conn->rollBack();
+                        $level--;
+                    } catch (\Throwable) {
+                        // If rollback fails, force purge and reconnect
+                        DB::purge($connection);
+                        DB::reconnect($connection);
+                        break;
+                    }
+                }
+            } catch (\Throwable) {
+                // Silently ignore if any connection errors occur
+                // Real test failure will surface if this is critical
+            }
+        }
+    }
+
+    /**
+     * Ensure open transactions are cleaned up after every test to prevent
+     * PDOException cascades when manual transaction handling leaves savepoints open.
+     * Call drainOpenTransactions BEFORE parent::tearDown() so we intercept
+     * open transactions before RefreshDatabase's cleanup runs.
+     */
+    protected function tearDown(): void
+    {
+        try {
+            $this->drainOpenTransactions();
+        } catch (\Throwable) {
+            // Ignore errors from drain to never mask a real test failure
+        } finally {
+            parent::tearDown();
+        }
     }
 }

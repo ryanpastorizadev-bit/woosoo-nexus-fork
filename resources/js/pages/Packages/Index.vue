@@ -9,6 +9,7 @@ import type { BreadcrumbItem } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
@@ -48,6 +49,7 @@ interface PackageModifierVm {
 interface PackageVm {
   id: number
   name: string
+  description?: string | null
   krypton_menu_id: number
   is_active: boolean
   sort_order: number
@@ -66,6 +68,7 @@ interface PackagesPageProps {
   description: string
   packages: PackageVm[]
   menuOptions: MenuOption[]
+  modifierDescriptions: Record<number, string>
 }
 
 const props = defineProps<PackagesPageProps>()
@@ -82,10 +85,12 @@ const pendingDelete = ref<PackageVm | null>(null)
 
 const form = useForm({
   name: '',
+  description: '',
   krypton_menu_id: 0,
   is_active: true,
   sort_order: 0,
   modifier_ids: [] as number[],
+  modifier_descriptions: {} as Record<number, string>,
 })
 
 const modifierSearch = ref('')
@@ -102,7 +107,7 @@ function modifiersToCsv(modifiers: PackageModifierVm[]): string {
 }
 
 const packageMenuOptions = computed(() => {
-  return (props.menuOptions ?? []).filter((item) => !item.is_modifier_only)
+  return props.menuOptions ?? []
 })
 
 const filteredModifierOptions = computed(() => {
@@ -121,6 +126,12 @@ const filteredModifierOptions = computed(() => {
 const selectedModifierPreview = computed(() => {
   const picked = new Set(form.modifier_ids)
   return (props.menuOptions ?? []).filter((item) => picked.has(item.id)).slice(0, 8)
+})
+
+const selectedModifiers = computed(() => {
+  const byId = new Map((props.menuOptions ?? []).map((item) => [item.id, item]))
+  return form.modifier_ids
+    .map((id) => byId.get(id) ?? { id, name: `Menu #${id}`, receipt_name: null, is_modifier_only: false } as MenuOption)
 })
 
 function isModifierSelected(menuId: number): boolean {
@@ -142,22 +153,30 @@ function resetForm() {
   editingId.value = null
   form.reset()
   form.clearErrors()
+  form.description = ''
   form.is_active = true
   form.krypton_menu_id = 0
   form.sort_order = 0
   form.modifier_ids = []
+  form.modifier_descriptions = {}
   modifierSearch.value = ''
 }
 
 function editPackage(item: PackageVm) {
   editingId.value = item.id
   form.name = item.name
+  form.description = item.description ?? ''
   form.krypton_menu_id = item.krypton_menu_id
   form.is_active = item.is_active
   form.sort_order = item.sort_order
   form.modifier_ids = [...(item.modifiers ?? [])]
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((modifier) => modifier.krypton_menu_id)
+  const descriptions: Record<number, string> = {}
+  for (const menuId of form.modifier_ids) {
+    descriptions[menuId] = props.modifierDescriptions?.[menuId] ?? ''
+  }
+  form.modifier_descriptions = descriptions
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
@@ -168,12 +187,14 @@ function submit() {
 
   const payload = {
     name: form.name,
+    description: form.description,
     krypton_menu_id: Number(form.krypton_menu_id),
     is_active: Boolean(form.is_active),
     sort_order: Number(form.sort_order),
     modifiers: orderedModifierIds.map((id, index) => ({
       krypton_menu_id: id,
       sort_order: index,
+      description: form.modifier_descriptions[id] ?? null,
     })),
   }
 
@@ -240,6 +261,18 @@ function executeDelete() {
               <p v-if="form.errors.name" class="text-sm text-destructive">{{ form.errors.name }}</p>
             </div>
 
+            <div class="space-y-2 md:col-span-2">
+              <Label for="package_description">Description</Label>
+              <Textarea
+                id="package_description"
+                v-model="form.description"
+                rows="3"
+                placeholder="A short, guest-facing description of what this package includes."
+              />
+              <p class="text-xs text-muted-foreground">Shown to guests. Describe what makes this package worth choosing.</p>
+              <p v-if="form.errors.description" class="text-sm text-destructive">{{ form.errors.description }}</p>
+            </div>
+
             <div class="space-y-2">
               <Label for="krypton_menu_id">Package Menu</Label>
               <Select v-model="form.krypton_menu_id">
@@ -291,6 +324,31 @@ function executeDelete() {
                 <Badge v-for="menu in selectedModifierPreview" :key="`picked-${menu.id}`" variant="outline">
                   {{ menu.name }}
                 </Badge>
+              </div>
+            </div>
+
+            <div v-if="selectedModifiers.length > 0" class="space-y-3 md:col-span-2">
+              <div class="flex items-center justify-between gap-2">
+                <Label>Modifier Descriptions</Label>
+                <Badge variant="secondary">{{ selectedModifiers.length }} item{{ selectedModifiers.length === 1 ? '' : 's' }}</Badge>
+              </div>
+              <p class="text-xs text-muted-foreground">
+                Descriptions are shared across all packages that include this item.
+              </p>
+              <div class="space-y-3 rounded-md border p-3">
+                <div v-for="menu in selectedModifiers" :key="`desc-${menu.id}`" class="space-y-1">
+                  <Label :for="`modifier-desc-${menu.id}`" class="leading-tight">
+                    <span class="font-medium">{{ menu.name }}</span>
+                    <span class="ml-1 text-xs text-muted-foreground">(ID: {{ menu.id }})</span>
+                    <span v-if="menu.receipt_name" class="ml-1 text-xs text-muted-foreground">{{ menu.receipt_name }}</span>
+                  </Label>
+                  <Textarea
+                    :id="`modifier-desc-${menu.id}`"
+                    v-model="form.modifier_descriptions[menu.id]"
+                    rows="2"
+                    placeholder="Describe this modifier for guests."
+                  />
+                </div>
               </div>
             </div>
 

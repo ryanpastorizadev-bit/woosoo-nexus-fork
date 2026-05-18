@@ -212,37 +212,38 @@ class OrderController extends Controller
         sort($orderIds, SORT_NUMERIC);
         $targetStatus = OrderStatus::from($request->input('status'));
 
-        $results = ['updated' => [], 'failed' => []];
-
-        DB::beginTransaction();
         try {
-            foreach ($orderIds as $oid) {
-                // Lookup by DeviceOrder ID (internal ID) with a pessimistic lock
-                $order = DeviceOrder::lockForUpdate()->find($oid);
-                if (! $order) {
-                    $results['failed'][] = ['order_id' => $oid, 'reason' => 'not_found'];
-                    continue;
+            $results = DB::transaction(function () use ($orderIds, $device, $targetStatus) {
+                $results = ['updated' => [], 'failed' => []];
+
+                foreach ($orderIds as $oid) {
+                    // Lookup by DeviceOrder ID (internal ID) with a pessimistic lock
+                    $order = DeviceOrder::lockForUpdate()->find($oid);
+                    if (! $order) {
+                        $results['failed'][] = ['order_id' => $oid, 'reason' => 'not_found'];
+                        continue;
+                    }
+
+                    if ($device && isset($device->branch_id) && isset($order->branch_id) && $device->branch_id !== $order->branch_id) {
+                        $results['failed'][] = ['order_id' => $oid, 'reason' => 'forbidden'];
+                        continue;
+                    }
+
+                    try {
+                        $order->status = $targetStatus;
+                        $order->save();
+                        $results['updated'][] = $order->order_id;
+                    } catch (\Throwable $e) {
+                        $results['failed'][] = ['order_id' => $oid, 'reason' => 'invalid_transition', 'message' => $e->getMessage()];
+                    }
                 }
 
-                if ($device && isset($device->branch_id) && isset($order->branch_id) && $device->branch_id !== $order->branch_id) {
-                    $results['failed'][] = ['order_id' => $oid, 'reason' => 'forbidden'];
-                    continue;
-                }
+                return $results;
+            });
 
-                try {
-                    $order->status = $targetStatus;
-                    $order->save();
-                    $results['updated'][] = $order->order_id;
-                } catch (\Throwable $e) {
-                    $results['failed'][] = ['order_id' => $oid, 'reason' => 'invalid_transition', 'message' => $e->getMessage()];
-                }
-            }
-            DB::commit();
+            return response()->json(['success' => true, 'results' => $results]);
         } catch (\Throwable $e) {
-            DB::rollBack();
             return response()->json(['success' => false, 'message' => 'Bulk update failed', 'error' => $e->getMessage()], 500);
         }
-
-        return response()->json(['success' => true, 'results' => $results]);
     }
 }

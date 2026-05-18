@@ -7,6 +7,10 @@ RUN apk add --no-cache \
     oniguruma-dev icu-dev \
     mysql-client
 
+# Allow Composer / Git operations against the bind-mounted repo path used by
+# app, queue, scheduler, and reverb containers in dev/staging deployments.
+RUN git config --system --add safe.directory /var/www/html
+
 # PHP extensions
 RUN docker-php-ext-install \
     pdo_mysql mbstring exif pcntl bcmath gd zip intl opcache

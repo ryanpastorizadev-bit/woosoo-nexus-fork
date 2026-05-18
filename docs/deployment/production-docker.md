@@ -157,6 +157,16 @@ docker compose down -v && docker compose up -d --build
 
 ---
 
+## Package Modifier Sync
+
+Package modifiers (for packages 46, 47, 48) are seeded during database migrations and synced
+via `PackageController::syncModifiers()` (triggered by admin package updates). The canonical
+sources are `PackageSeeder` and `app/Http/Controllers/Admin/PackageController.php`.
+Do not use ad-hoc PHP scripts — both former scripts (`update_package_modifiers.php` and
+`scripts/update_package_modifiers.php`) have been deleted.
+
+---
+
 ## Deterministic Tablet Deployment
 
 Use the deployment scripts to guarantee the exact Nexus + Tablet context being deployed:

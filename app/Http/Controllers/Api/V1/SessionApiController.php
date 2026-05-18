@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Device;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -92,7 +93,7 @@ class SessionApiController extends Controller
         $user = $request->user();
         // Allow admins (User->is_admin) or devices
         $isAdmin = isset($user->is_admin) && $user->is_admin;
-        $isDevice = $user && get_class($user) === '\\App\\Models\\Device';
+        $isDevice = $user instanceof Device;
 
         if (! $isAdmin && ! $isDevice) {
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);

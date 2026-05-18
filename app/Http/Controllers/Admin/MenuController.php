@@ -7,9 +7,9 @@ use App\Http\Resources\MenuResource;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use App\Models\Krypton\Menu;
+use App\Models\MenuImage;
 use App\Services\StatsService;
 use Illuminate\Support\Str;
-use App\Models\MenuImage;
 use Illuminate\Support\Facades\Storage;
 
 class MenuController extends Controller
@@ -23,11 +23,19 @@ class MenuController extends Controller
             $menus = collect([]);
         }
 
-        $menus = $menus->map(function ($menu) {
+        $menuImages = MenuImage::whereIn('menu_id', $menus->pluck('id')->all())
+            ->get()
+            ->keyBy('menu_id');
+
+        $menus = $menus->map(function ($menu) use ($menuImages) {
+            $menu->setRelation('image', $menuImages->get($menu->id));
+            $imagePath = $menu->image?->path;
+
             return [
                 'id' => $menu->id,
                 'name' => $menu->name,
                 'img_url' => $menu->image_url,
+                'has_uploaded_image' => $imagePath !== null && Storage::disk('public')->exists($imagePath),
                 'group' => $menu->group->name ?? null,
                 'category' => $menu->category->name ?? null,
                 'course' => $menu->course->name ?? null,
@@ -88,10 +96,10 @@ class MenuController extends Controller
                 Storage::disk('public')->delete($oldPath);
             }
 
-            // Save new image
+            // Save new image — timestamp in filename busts browser cache on re-upload
             $file = $request->file('image');
             $slug = Str::slug($menu->name);
-            $filename = "{$slug}." . $file->getClientOriginalExtension();
+            $filename = "{$slug}_" . time() . "." . $file->getClientOriginalExtension();
             $path = $file->storeAs('menu/images', $filename, 'public');
 
             MenuImage::updateOrCreate(

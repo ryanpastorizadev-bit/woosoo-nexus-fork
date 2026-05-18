@@ -5,11 +5,11 @@ namespace Tests\Feature\Order;
 use App\Models\Branch;
 use App\Models\Device;
 use App\Models\DeviceOrder;
+use App\Models\Package;
 use App\Models\Krypton\Order;
 use App\Models\Krypton\Menu;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use Tests\TestCase;
@@ -55,16 +55,30 @@ class TransactionRollbackTest extends TestCase
         $this->createTestSession();
     }
 
+    private function seedTabletPackage(int $kryptonMenuId = 1): void
+    {
+        Package::query()->create([
+            'name' => 'Transaction Test Package',
+            'krypton_menu_id' => $kryptonMenuId,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+    }
+
     protected function tearDown(): void
     {
-        Mockery::close();
-
-        parent::tearDown();
+        try {
+            parent::tearDown();
+        } finally {
+            Mockery::close();
+        }
     }
 
     #[Test]
-    public function it_rolls_back_entire_transaction_on_order_service_failure()
+    public function it_rolls_back_local_transaction_but_keeps_pos_on_order_service_failure()
     {
+        $this->seedTabletPackage();
+
         $device = Device::factory()->create([
             'table_id' => 1,
             'branch_id' => $this->branch->id,
@@ -98,9 +112,12 @@ class TransactionRollbackTest extends TestCase
         // Request should fail
         $this->assertNotEquals(201, $response->status(), 'Order creation should fail with invalid menu_id');
 
-        // Verify NO orders were created in EITHER database (full rollback)
-        $this->assertEquals($initialPosOrderCount, Order::count(), 'No POS orders should be created on failure');
-        $this->assertEquals($initialDeviceOrderCount, DeviceOrder::count(), 'No device orders should be created on failure');
+        // POS-first contract (krypton_woosoo_specs.md, Issue A): the LOCAL
+        // transaction rolls back, but POS rows already written are authoritative
+        // and intentionally NOT compensated (manual POS deletes are forbidden).
+        // The POS order persists and is reconciled out-of-band.
+        $this->assertEquals($initialDeviceOrderCount, DeviceOrder::count(), 'No device orders should be created on local failure');
+        $this->assertEquals($initialPosOrderCount + 1, Order::count(), 'POS order persists (POS-first: no compensating delete)');
     }
 
     #[Test]
@@ -148,8 +165,10 @@ class TransactionRollbackTest extends TestCase
     }
 
     #[Test]
-    public function it_ensures_no_orphaned_pos_records_on_local_db_failure()
+    public function it_does_not_compensate_pos_rows_on_local_db_failure_pos_first_contract()
     {
+        $this->seedTabletPackage();
+
         $device = Device::factory()->create([
             'table_id' => 1,
             'branch_id' => $this->branch->id,
@@ -192,12 +211,22 @@ class TransactionRollbackTest extends TestCase
             // Request should fail with 500 error
             $response->assertStatus(500);
 
-            // CRITICAL: Verify no orphaned POS orders were created
-            // (OrderService's catch-block must have cleaned up POS-side rows)
+            // POS-first contract (krypton_woosoo_specs.md, Issue A): POS writes
+            // are authoritative, non-rolled-back side effects. On a local-DB
+            // failure the LOCAL transaction rolls back, but POS rows are
+            // intentionally NOT compensated (manual POS deletes are forbidden —
+            // they can destroy valid POS transactions and drift from real
+            // terminal activity). Orphaned POS rows are expected here and are
+            // reconciled out-of-band by the reconciliation worker.
             $this->assertEquals(
-                $initialPosOrderCount,
+                0,
+                DeviceOrder::where('device_id', $device->id)->count(),
+                'Local device order must roll back on local DB failure'
+            );
+            $this->assertEquals(
+                $initialPosOrderCount + 1,
                 Order::count(),
-                'POS orders should NOT be created when local DB fails (cross-db transaction integrity)'
+                'POS order remains (POS-first: no compensating delete)'
             );
         } finally {
             DeviceOrder::flushEventListeners();
@@ -208,6 +237,8 @@ class TransactionRollbackTest extends TestCase
     #[Test]
     public function it_completes_transaction_atomically_on_success()
     {
+        $this->seedTabletPackage();
+
         $device = Device::factory()->create([
             'table_id' => 1,
             'branch_id' => $this->branch->id,
@@ -256,16 +287,6 @@ class TransactionRollbackTest extends TestCase
     #[Test]
     public function it_logs_errors_when_transaction_fails()
     {
-        Log::shouldReceive('withContext')->zeroOrMoreTimes();
-        Log::shouldReceive('info')->zeroOrMoreTimes();
-        Log::shouldReceive('error')
-            ->atLeast()->once()
-            ->withArgs(function ($message, $context) {
-                return str_contains($message, 'Order creation') &&
-                       isset($context['device_id']) &&
-                       isset($context['error']);
-            });
-
         $device = Device::factory()->create([
             'table_id' => 1,
             'branch_id' => $this->branch->id,
@@ -292,7 +313,8 @@ class TransactionRollbackTest extends TestCase
                 ],
             ]);
 
-        // Error should be logged with full context
-        $this->assertNotEquals(201, $response->status());
+        $response
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Invalid order payload: package_id 1 not found or inactive.');
     }
 }
