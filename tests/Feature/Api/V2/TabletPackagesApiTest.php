@@ -241,8 +241,9 @@ class TabletPackagesApiTest extends TestCase
         $device = $this->authenticatedDevice();
 
         // Create active package
-        \App\Models\Package::create([
+        $activePackage = \App\Models\Package::create([
             'name' => 'Set Meal A',
+            'description' => 'Classic Feast package copy.',
             'krypton_menu_id' => 46,
             'is_active' => true,
             'sort_order' => 0,
@@ -263,6 +264,32 @@ class TabletPackagesApiTest extends TestCase
         $response->assertJsonPath('success', true);
         $this->assertCount(1, $response->json('data'));
         $this->assertEquals(46, $response->json('data.0.id'));
+        $this->assertEquals(46, $response->json('data.0.krypton_menu_id'));
+        $this->assertEquals($activePackage->id, $response->json('data.0.package_config_id'));
+        $this->assertEquals('Classic Feast package copy.', $response->json('data.0.package_config_description'));
+        $this->assertEquals('Classic Feast package copy.', $response->json('data.0.description'));
+        $this->assertEquals('Set Meal A', $response->json('data.0.name'));
+        $this->assertEquals('449.00', $response->json('data.0.price'));
+    }
+
+    public function test_package_with_invalid_krypton_menu_id_is_excluded(): void
+    {
+        $device = $this->authenticatedDevice();
+
+        \App\Models\Package::create([
+            'name' => 'Broken Package',
+            'description' => 'This package points at a missing POS menu.',
+            'krypton_menu_id' => 9999,
+            'is_active' => true,
+            'sort_order' => 0,
+        ]);
+
+        $response = $this->withToken($this->deviceToken($device), 'Bearer')
+            ->getJson('/api/v2/tablet/packages');
+
+        $response->assertOk();
+        $response->assertJsonPath('success', true);
+        $this->assertCount(0, $response->json('data'));
     }
 
     public function test_package_with_valid_modifiers_returns_modifiers(): void
@@ -289,6 +316,9 @@ class TabletPackagesApiTest extends TestCase
         $modifiers = $response->json('data.0.modifiers');
         $this->assertCount(1, $modifiers);
         $this->assertEquals(101, $modifiers[0]['id']);
+        $this->assertEquals(101, $modifiers[0]['krypton_menu_id']);
+        $this->assertEquals('Pork 1', $modifiers[0]['name']);
+        $this->assertEquals(0, $modifiers[0]['sort_order']);
     }
 
     public function test_package_with_invalid_modifier_excludes_it(): void
