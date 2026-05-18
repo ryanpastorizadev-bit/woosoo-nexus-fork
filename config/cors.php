@@ -32,7 +32,7 @@ return [
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
     'max_age' => 86400,
-    // Must be false when allowed_origins is ['*'].
+    // PublicOrigin::corsOrigins() always returns explicit named origins, never ['*'], so supports_credentials=true is safe.
     // Enable credentials for web admin login (Inertia uses session cookies + CSRF).
     // Tablet PWA uses Bearer token auth — credentials don't interfere with that.
     'supports_credentials' => true,

@@ -59,21 +59,24 @@ class TerminalContextResolver
                 ->orderByDesc('id')
                 ->first();
 
-            // Fallback: any open cash tray for this session
+            // Fallback: any open cash tray for this session and terminal
             if (! $cashTraySession) {
                 $cashTraySession = DB::connection('pos')
                     ->table('cash_tray_sessions')
                     ->where('session_id', $session->id)
+                    ->where('terminal_id', $terminalId)
                     ->where('is_open', 1)
                     ->orderByDesc('id')
                     ->first();
             }
 
-            // Final fallback: most recent cash tray for this session
+            // Final fallback: most recent open cash tray for this terminal
             if (! $cashTraySession) {
                 $cashTraySession = DB::connection('pos')
                     ->table('cash_tray_sessions')
                     ->where('session_id', $session->id)
+                    ->where('terminal_id', $terminalId)
+                    ->where('is_open', 1)
                     ->orderByDesc('id')
                     ->first();
             }
