@@ -5,15 +5,16 @@ namespace App\Http\Controllers\Api\V2;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Repositories\Krypton\MenuRepository;
+use App\Http\Resources\MenuModifierResource;
 use App\Http\Resources\MenuResource;
 use App\Models\Krypton\Menu;
+use App\Models\ModifierDescription;
 use App\Models\Package;
 use App\Models\TabletCategory;
 use App\Http\Responses\ApiResponse;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
-use Illuminate\Support\Collection;
 
 /**
  * Tablet API Controller (V2)
@@ -32,6 +33,7 @@ class TabletApiController extends Controller
     private const MEATS_GROUP_ID = 34;    // POS group "Meat Order"
     private const SIDES_GROUP_ID = 29;    // POS group for sides
     private const DRINKS_GROUP_ID = 30;   // POS group for beverages
+    private const DESSERT_COURSE = 'dessert';
 
     protected $menuRepository;
 
@@ -49,7 +51,7 @@ class TabletApiController extends Controller
      * @return \Illuminate\Http\JsonResponse
      */
     /** Cache key for the resolved packages payload. Busted on admin save/update/delete. */
-    public const PACKAGES_CACHE_KEY = 'tablet.packages.v1';
+    public const PACKAGES_CACHE_KEY = 'tablet.packages.v2';
 
     /** TTL in seconds — 5 minutes. Short enough to pick up changes if cache flush is missed. */
     private const PACKAGES_CACHE_TTL = 300;
@@ -68,42 +70,84 @@ class TabletApiController extends Controller
                     return [];
                 }
 
-                // Bulk-load all required Krypton menu records.
-                $packageMenuIds  = $dbPackages->pluck('krypton_menu_id')->filter()->unique()->values()->toArray();
+                $packageMenuIds = $dbPackages->pluck('krypton_menu_id')
+                    ->filter()
+                    ->unique()
+                    ->values()
+                    ->toArray();
+
                 $modifierMenuIds = $dbPackages->flatMap(fn ($p) => $p->modifiers->pluck('krypton_menu_id'))
                     ->filter()->unique()->values()->toArray();
-                $allIds = array_values(array_unique(array_merge($packageMenuIds, $modifierMenuIds)));
 
-                $kryptonMenus = Menu::with(['image', 'tax', 'group'])
-                    ->whereIn('id', $allIds)
+                $menuIds = array_values(array_unique(array_merge($packageMenuIds, $modifierMenuIds)));
+
+                $kryptonMenus = Menu::with(['image', 'tax', 'group', 'category', 'course'])
+                    ->whereIn('id', $menuIds)
                     ->get()
                     ->keyBy('id');
 
-                // Stitch Krypton menu models together with their ordered modifiers.
-                // Exclude invalid modifiers and log warnings for missing menu references.
-                $result = $dbPackages->map(function ($dbPackage) use ($kryptonMenus) {
-                    $menu = $kryptonMenus->get($dbPackage->krypton_menu_id);
-                    if (! $menu) {
+                $modifierDescriptions = ModifierDescription::query()
+                    ->whereIn('krypton_menu_id', $modifierMenuIds)
+                    ->pluck('description', 'krypton_menu_id');
+
+                $result = $dbPackages->map(function ($dbPackage) use ($kryptonMenus, $modifierDescriptions) {
+                    $packageMenuId = (int) $dbPackage->krypton_menu_id;
+                    $packageMenu = $kryptonMenus->get($packageMenuId);
+
+                    if (! $packageMenu) {
+                        Log::warning("Invalid Package: id={$dbPackage->id}, krypton_menu_id={$packageMenuId} not found in POS");
+
                         return null;
                     }
 
-                    $modifierModels = $dbPackage->modifiers
-                        ->map(function ($pm) use ($kryptonMenus) {
-                            $kryptonMenu = $kryptonMenus->get($pm->krypton_menu_id);
-                            if (! $kryptonMenu) {
-                                Log::warning("Invalid PackageModifier: id={$pm->id}, krypton_menu_id={$pm->krypton_menu_id} not found in POS");
+                    $modifiers = $dbPackage->modifiers
+                        ->sortBy('sort_order')
+                        ->values()
+                        ->map(function ($packageModifier) use ($kryptonMenus, $modifierDescriptions) {
+                            $menuId = (int) $packageModifier->krypton_menu_id;
+                            $modifierMenu = $kryptonMenus->get($menuId);
+
+                            if (! $modifierMenu) {
+                                Log::warning("Invalid PackageModifier: id={$packageModifier->id}, krypton_menu_id={$menuId} not found in POS");
+
                                 return null;
                             }
-                            return $kryptonMenu;
+
+                            $payload = MenuModifierResource::make($modifierMenu)->resolve();
+
+                            $description = $modifierDescriptions->get($menuId);
+                            if ($description !== null && $description !== '') {
+                                $payload['description'] = $description;
+                            }
+
+                            $payload['id'] = $menuId;
+                            $payload['krypton_menu_id'] = $menuId;
+                            $payload['package_modifier_id'] = (int) $packageModifier->id;
+                            $payload['sort_order'] = (int) $packageModifier->sort_order;
+
+                            return $payload;
                         })
                         ->filter()
                         ->values();
 
-                    $menu->setRelation('modifiers', $modifierModels);
-                    return $menu;
+                    $payload = MenuResource::make($packageMenu)->resolve();
+                    $description = $dbPackage->description;
+
+                    $payload['id'] = $packageMenuId;
+                    $payload['package_id'] = $packageMenuId;
+                    $payload['krypton_menu_id'] = $packageMenuId;
+                    $payload['description'] = $description;
+                    $payload['package_config_id'] = (int) $dbPackage->id;
+                    $payload['package_config_name'] = $dbPackage->name;
+                    $payload['package_config_description'] = $description;
+                    $payload['is_active'] = (bool) $dbPackage->is_active;
+                    $payload['sort_order'] = (int) $dbPackage->sort_order;
+                    $payload['modifiers'] = $modifiers;
+
+                    return $payload;
                 })->filter()->values();
 
-                return MenuResource::collection($result)->resolve();
+                return $result->all();
             });
 
             return ApiResponse::success($resolved, 'Packages retrieved successfully');
@@ -292,7 +336,6 @@ class TabletApiController extends Controller
 
     /**
      * Build legacy package menu models with their corresponding legacy modifiers.
-    /**
      * GET /api/v2/tablet/categories/{slug}/menus
      * 
      * Returns menus for a specific category using fixed POS group ID mapping.
@@ -312,7 +355,7 @@ class TabletApiController extends Controller
                 'meats' => fn () => $this->menuRepository->getMenusByGroupId(self::MEATS_GROUP_ID),
                 'sides' => fn () => $this->menuRepository->getMenusByGroupId(self::SIDES_GROUP_ID),
                 'drinks' => fn () => $this->menuRepository->getMenusByGroupId(self::DRINKS_GROUP_ID),
-                'desserts' => fn () => $this->menuRepository->getMenusByCourse('dessert'),
+                'desserts' => fn () => $this->menuRepository->getMenusByCourse(self::DESSERT_COURSE),
             ];
 
             if (!array_key_exists($normalizedSlug, $categoryMap)) {
@@ -340,4 +383,5 @@ class TabletApiController extends Controller
             return ApiResponse::error('Failed to retrieve category menus', null, 500);
         }
     }
+
 }

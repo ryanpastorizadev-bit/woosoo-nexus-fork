@@ -98,9 +98,11 @@ class PosOrderService
             $affected = DB::connection('pos')
                 ->table('orders')
                 ->where('id', $orderId)
+                ->where('is_settled', 0)
                 ->update([
                     'is_voided'         => 1,
                     'is_open'           => 0,
+                    'is_settled'        => 0,
                     'date_time_closed'  => $now,
                 ]);
 

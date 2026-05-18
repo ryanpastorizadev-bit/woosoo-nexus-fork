@@ -78,7 +78,7 @@ class PrintEventService
     public function ack(int $printEventId, ?string $printerId = null, ?string $printedAt = null, ?int $acknowledgedByDeviceId = null, ?string $printerName = null, ?string $verificationMode = null): array
     {
         if ($printedAt) {
-            $ackAt = Carbon::parse($printedAt);
+            $ackAt = Carbon::parse($printedAt)->utc();
         } else {
             $ackAt = Carbon::now();
         }

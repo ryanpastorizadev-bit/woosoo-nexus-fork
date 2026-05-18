@@ -28,6 +28,6 @@ class UtcDateTimeCast implements CastsAttributes
             return $value->utc()->format('Y-m-d H:i:s');
         }
 
-        return Carbon::parse((string) $value)->utc()->format('Y-m-d H:i:s');
+        return Carbon::parse((string) $value, 'UTC')->utc()->format('Y-m-d H:i:s');
     }
 }
