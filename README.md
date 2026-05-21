@@ -1,31 +1,69 @@
 # Woosoo Nexus
 
-Integrated restaurant platform for:
-- Admin panel + API (Laravel/Inertia/Vue)
-- Tablet ordering PWA (Nuxt, built from sibling repo)
-- Print relay integration
+Clean admin application built with:
 
-## Repository authority
+- Laravel 12
+- Vue 3
+- Inertia.js
+- Tailwind CSS
+- shadcn-vue style components
 
-- **Production deployment authority:** `compose.yaml` in this repository only.
-- **Canonical documentation entrypoint:** `docs/INDEX.md`.
-- **Frontend source authority:** `../tablet-ordering-pwa` (sibling repository).
+## Current Scope
 
-## Production deployment rule
+This repository is focused on the Woosoo Nexus admin experience first.
 
-Run production Docker operations from:
+The immediate goal is a clean, maintainable admin UI and application foundation before adding production infrastructure, tablet deployment, print bridge workflows, or external service orchestration.
 
-`E:\Projects\woosoo-nexus`
+## Development
 
-Use:
+Install dependencies:
 
-`docker compose ...` (from this repo, using `compose.yaml`)
+```bash
+composer install
+npm install
+```
 
-Do not use standalone production deployment flows from other repositories.
+Run the Laravel and Vite development servers:
 
-## Documentation governance
+```bash
+composer dev
+```
 
-- Canonical docs live under `docs/`.
-- Historical/transitional docs live under `docs/archive/`.
-- Root-level markdown is intentionally minimal.
-- PRs must pass the documentation checklist in `.github/pull_request_template.md`.
+Build frontend assets:
+
+```bash
+npm run build
+```
+
+Run backend tests:
+
+```bash
+php artisan test
+```
+
+Run frontend checks:
+
+```bash
+npm run typecheck
+npm run lint:check
+```
+
+## Architecture Direction
+
+Keep the app simple first:
+
+```txt
+Laravel controllers / routes
+↓
+Inertia pages
+↓
+Vue components
+↓
+Tailwind CSS + shadcn-vue primitives
+```
+
+Avoid coupling the admin foundation to deployment-specific concerns until the UI, routes, and data contracts are stable.
+
+## Documentation
+
+Canonical documentation should live under `docs/` once the clean admin foundation is finalized.
