@@ -1,165 +1,170 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
 import AppLayout from '@/layouts/AppLayout.vue'
 import { type BreadcrumbItem } from '@/types'
 import { Head } from '@inertiajs/vue3'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { 
-    type LucideIcon, 
-    ChartSpline,
-    Contact,
-    ArrowUp10,
-    ChartPie,
-} from 'lucide-vue-next';
-
-import LineChart from '@/components/charts/LineChart.vue';
-import DonutChart from '@/components/charts/DonutChart.vue';
-
-
-interface DashCards {
-  title?: string;
-  value?: string | number;
-  icon?: LucideIcon;
-  helpText?: string;
-}
-
-const props = defineProps<{
-    title?: string
-    description?: string
-    tableOrders: any
-    openOrders: any,
-    sessionId: number | null,
-    totalSales: string | number,
-    guestCount: string | number,
-    totalOrders: string | number,
-    monthlySales: string | number,
-    salesData?: any[]
-}>()
 
 const breadcrumbs: BreadcrumbItem[] = [
-    {
-        title: 'Dashboard',
-        href: '/dashboard',
-    },
-];
+  { title: 'Dashboard', href: '/dashboard' },
+]
 
-function parseCurrency(value: string | number | undefined | null): number {
-    if (value === null || value === undefined) return 0
-    if (typeof value === 'number') return isNaN(value) ? 0 : value
-    return Number(String(value).replace(/,/g, '')) || 0
-}
+const kpis = [
+  { label: 'Active Devices', value: '7 / 8', helper: '⚠ 1 warning · 1 offline', tone: 'text-[#f5b96d]' },
+  { label: 'Open Orders', value: '12', helper: '↑ +3 in last 30 min', tone: 'text-[#75a86f]' },
+  { label: 'Queue Depth', value: '3', helper: 'Background jobs', tone: 'text-[#847b67]' },
+  { label: 'Print Failures', value: '0', helper: 'No failures today', tone: 'text-[#847b67]' },
+]
 
-const dashCards = computed<DashCards[]>(() => [
-    {
-        title: 'Total Sales Today',
-        value: new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(parseCurrency(props.totalSales)),
-        icon: ChartSpline,
-        helpText: `${props.totalOrders ?? 0} Transactions`,
-    },
-    {
-        title: `Today's Orders`,
-        value: props.totalOrders ?? 0,
-        icon: ArrowUp10,
-        helpText: 'Completed orders today',
-    },
-    {
-        title: `Total Guests`,
-        value: props.guestCount ?? 0,
-        icon: Contact,
-        helpText: 'Guests served today',
-    },
-    {
-        title: `Monthly Sales`,
-        value: new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(parseCurrency(props.monthlySales)),
-        icon: ChartPie,
-        helpText: new Date().toLocaleString('default', { month: 'long', year: 'numeric' }),
-    },
-])
+const revenueBars = [
+  { hour: '10', height: 0 },
+  { hour: '11', height: 12 },
+  { hour: '12', height: 30 },
+  { hour: '13', height: 46 },
+  { hour: '14', height: 54 },
+  { hour: '15', height: 34 },
+  { hour: '16', height: 28 },
+  { hour: '17', height: 68 },
+  { hour: '18', height: 106 },
+  { hour: '19', height: 110, active: true },
+  { hour: '20', height: 0 },
+  { hour: '21', height: 0 },
+]
 
+const queue = [
+  { label: 'Incoming', value: 3, dot: 'bg-[#7a9bc4]' },
+  { label: 'Grilling', value: 3, dot: 'bg-[#d6a24a]' },
+  { label: 'Ready', value: 2, dot: 'bg-[#75a86f]' },
+  { label: 'Served', value: 12, dot: 'bg-[#5a5345]' },
+]
 
-
-
-onMounted(() => {
-  
-});
-
-
+const sessions = [
+  { id: 'SES-0342', table: 'T-04', guests: '4 pax', package: 'Noble Selection', time: '7:28 PM', total: '₱1,996', status: 'confirmed' },
+  { id: 'SES-0341', table: 'T-06', guests: '2 pax', package: 'Classic Feast', time: '7:24 PM', total: '₱898', status: 'confirmed' },
+  { id: 'SES-0340', table: 'T-01', guests: '6 pax', package: 'Royal Banquet', time: '7:15 PM', total: '₱3,294', status: 'confirmed' },
+  { id: 'SES-0339', table: 'T-02', guests: '3 pax', package: 'Noble Selection', time: '6:58 PM', total: '₱1,497', status: 'confirmed' },
+]
 </script>
 
 <template>
+  <Head title="Dashboard" />
 
-    <Head :title="props.title" :description="props.description" />
+  <AppLayout :breadcrumbs="breadcrumbs">
+    <div class="space-y-3">
+      <header class="flex items-center gap-3">
+        <h1 class="text-[20px] font-black tracking-[-0.03em] text-[#f5f1e6]">Dashboard</h1>
+        <span class="text-[#6b3622]">·</span>
+        <p class="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d7b60]">Operations Overview</p>
+      </header>
 
-    <AppLayout :breadcrumbs="breadcrumbs">
+      <section class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <article
+          v-for="kpi in kpis"
+          :key="kpi.label"
+          class="rounded-lg border border-[#25221c] bg-[#1a1814] p-5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_1px_2px_rgba(0,0,0,0.4)]"
+        >
+          <p class="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#847b67]">{{ kpi.label }}</p>
+          <p class="mt-2 text-[32px] font-black leading-none tracking-[-0.04em] text-[#f5f1e6]">{{ kpi.value }}</p>
+          <p class="mt-3 text-[12px] font-semibold" :class="kpi.tone">{{ kpi.helper }}</p>
+        </article>
+      </section>
 
-        <div class="space-y-6">
-            <div class="grid gap-4 lg:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.8fr)]">
-                <div class="relative overflow-hidden rounded-[28px] border border-black/8 bg-[linear-gradient(135deg,rgba(246,181,109,0.22),rgba(255,255,255,0.88)_42%,rgba(176,128,71,0.12))] px-5 py-6 shadow-[0_28px_70px_-40px_rgba(176,128,71,0.45)] dark:border-white/12 dark:bg-[linear-gradient(135deg,rgba(246,181,109,0.22),rgba(255,255,255,0.09)_45%,rgba(176,128,71,0.14))] md:px-6">
-                    <div class="pointer-events-none absolute -right-14 top-0 h-40 w-40 rounded-full bg-white/35 blur-3xl dark:bg-[#f6b56d]/12"></div>
-                    <div class="relative space-y-3">
-                        <span class="inline-flex rounded-full border border-black/8 bg-white/60 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground dark:border-white/10 dark:bg-white/[0.05]">Live operations</span>
-                        <div>
-                            <h1 class="font-header text-3xl font-semibold tracking-tight text-foreground md:text-[2.2rem]">Dashboard overview</h1>
-                            <p class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground md:text-base">Keep service flow visible, monitor sales performance, and watch the floor from one calmer control surface.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                    <div class="rounded-[24px] border border-black/8 bg-white/72 px-4 py-4 shadow-[0_22px_55px_-42px_rgba(37,37,37,0.4)] dark:border-white/12 dark:bg-white/[0.08]">
-                        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Session</p>
-                        <p class="mt-2 text-2xl font-semibold tracking-tight">{{ props.sessionId ? '#' + props.sessionId : '\u2014' }}</p>
-                        <p class="mt-1 text-sm text-muted-foreground">Current operational window</p>
-                    </div>
-                    <div class="rounded-[24px] border border-black/8 bg-white/72 px-4 py-4 shadow-[0_22px_55px_-42px_rgba(37,37,37,0.4)] dark:border-white/12 dark:bg-white/[0.08]">
-                        <p class="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">Open tables</p>
-                        <p class="mt-2 text-2xl font-semibold tracking-tight">{{ props.openOrders?.length ?? 0 }}</p>
-                        <p class="mt-1 text-sm text-muted-foreground">Tables with active ordering activity</p>
-                    </div>
-                </div>
+      <section class="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <article class="min-h-[360px] rounded-lg border border-[#25221c] bg-[#1a1814] p-5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_1px_2px_rgba(0,0,0,0.4)]">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#847b67]">Hourly Revenue</p>
+              <div class="mt-5 flex items-baseline gap-2">
+                <p class="text-[24px] font-black tracking-[-0.05em] text-[#f5f1e6]">₱34,200</p>
+                <span class="text-[12px] font-semibold text-[#847b67]">today so far</span>
+              </div>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card v-for="dashCard in dashCards" :key="dashCard.title" class="gap-4 border-black/8 px-1 transition-transform duration-200 hover:-translate-y-1 hover:shadow-[0_30px_70px_-46px_rgba(37,37,37,0.45)] dark:border-white/10">
-                    <CardHeader class="flex flex-row items-start justify-between p-5 pb-1">
-                        <CardTitle class="text-sm font-medium text-muted-foreground">
-                        {{ dashCard.title }}
-                        </CardTitle>
-                        <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#f6b56d]/16 text-[#8f6436] dark:bg-[#f6b56d]/12 dark:text-[#f6b56d]">
-                            <component :is="dashCard.icon" class="size-5 shrink-0" />
-                        </div>
-                    </CardHeader>
-                    <CardContent class="p-5 pt-0">
-                        <div class="text-3xl font-semibold tabular-nums tracking-tight">
-                        {{ dashCard.value }}
-                        </div>
-                        <p class="mt-2 text-sm text-muted-foreground">
-                        {{ dashCard.helpText }}
-                        </p>
-                    </CardContent>
-                </Card>
+            <div class="flex overflow-hidden rounded-md border border-[#43392c] bg-[#0d0c0a] text-[11px] font-bold text-[#847b67]">
+              <button class="bg-[#25221b] px-4 py-2 text-[#f5f1e6]">Today</button>
+              <button class="px-4 py-2">Week</button>
+              <button class="px-4 py-2">Month</button>
             </div>
-            
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <Card class="border-black/8 dark:border-white/10">
-                    <CardHeader class="p-5 pb-1">
-                        <CardTitle class="text-lg font-semibold">Sales Trend</CardTitle>
-                        <p class="text-sm text-muted-foreground">Revenue movement across the current reporting window.</p>
-                    </CardHeader>
-                    <CardContent class="p-5 pt-0">
-                        <LineChart />
-                    </CardContent>
-                </Card>
-                <Card class="border-black/8 dark:border-white/10">
-                    <CardHeader class="p-5 pb-1">
-                        <CardTitle class="text-lg font-semibold">Distribution</CardTitle>
-                        <p class="text-sm text-muted-foreground">Quick split of activity across the active data set.</p>
-                    </CardHeader>
-                    <CardContent class="flex items-center justify-center p-5 pt-0">
-                        <DonutChart />
-                    </CardContent>
-                </Card>
+          </div>
+
+          <div class="mt-16 flex h-[132px] items-end gap-1 px-7">
+            <div
+              v-for="bar in revenueBars"
+              :key="bar.hour"
+              class="flex flex-1 flex-col items-center justify-end gap-2"
+            >
+              <div
+                class="w-full rounded-t-sm"
+                :class="bar.active ? 'bg-[#ffbd70]' : 'bg-[#2a261f]'"
+                :style="{ height: `${bar.height}px` }"
+              />
+              <span class="text-[10px] font-semibold text-[#43392c]">{{ bar.hour }}</span>
             </div>
+          </div>
+        </article>
+
+        <aside class="rounded-lg border border-[#25221c] bg-[#1a1814] p-4 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_1px_2px_rgba(0,0,0,0.4)]">
+          <div class="flex items-center justify-between border-b border-[#25221c] pb-3">
+            <p class="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#847b67]">Live Queue</p>
+            <span class="rounded-full border border-[#6b3622] bg-[#2b1a0b] px-3 py-1 text-[11px] font-bold text-[#ffbd70]">• 7 active</span>
+          </div>
+
+          <div class="mt-3 space-y-2">
+            <div
+              v-for="item in queue"
+              :key="item.label"
+              class="flex items-center justify-between rounded-md bg-[#25221b] px-3 py-3"
+            >
+              <div class="flex items-center gap-2">
+                <span class="h-2 w-2 rounded-full" :class="item.dot" />
+                <span class="text-[13px] font-bold text-[#c5bda9]">{{ item.label }}</span>
+              </div>
+              <span class="text-[18px] font-black text-[#f5f1e6]">{{ item.value }}</span>
+            </div>
+          </div>
+
+          <div class="mt-4 border-t border-[#25221c] pt-4">
+            <p class="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#847b67]">System Health</p>
+            <div class="mt-2 flex flex-wrap gap-2">
+              <span v-for="item in ['MySQL', 'Redis', 'POS DB', 'Queue']" :key="item" class="rounded-md border border-[#244b24] bg-[#122612] px-2.5 py-1 text-[11px] font-bold text-[#75a86f]">• {{ item }}</span>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="overflow-hidden rounded-lg border border-[#25221c] bg-[#1a1814] shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_1px_2px_rgba(0,0,0,0.4)]">
+        <header class="flex items-center justify-between border-b border-[#25221c] px-4 py-4">
+          <p class="text-[10.5px] font-semibold uppercase tracking-[0.16em] text-[#847b67]">Recent Sessions</p>
+          <button class="text-[12px] font-bold text-[#f5f1e6] hover:text-[#ffbd70]">View all</button>
+        </header>
+
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-[760px] text-left">
+            <thead>
+              <tr class="border-b border-[#25221c] text-[10px] font-bold uppercase tracking-[0.14em] text-[#5a5345]">
+                <th class="px-4 py-2">Session</th>
+                <th class="px-4 py-2">Table</th>
+                <th class="px-4 py-2">Guests</th>
+                <th class="px-4 py-2">Package</th>
+                <th class="px-4 py-2">Time</th>
+                <th class="px-4 py-2">Total</th>
+                <th class="px-4 py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="session in sessions" :key="session.id" class="border-b border-[#25221c] last:border-0">
+                <td class="px-4 py-3 text-[13px] font-bold text-[#ffbd70]">{{ session.id }}</td>
+                <td class="px-4 py-3 text-[15px] font-black text-[#f5f1e6]">{{ session.table }}</td>
+                <td class="px-4 py-3 text-[13px] font-bold text-[#c5bda9]">{{ session.guests }}</td>
+                <td class="px-4 py-3 text-[13px] font-bold text-[#c5bda9]">{{ session.package }}</td>
+                <td class="px-4 py-3 text-[13px] font-semibold text-[#847b67]">{{ session.time }}</td>
+                <td class="px-4 py-3 text-[15px] font-black text-[#f5f1e6]">{{ session.total }}</td>
+                <td class="px-4 py-3">
+                  <span class="rounded-full border border-[#6b3622] bg-[#2b1a0b] px-3 py-1 text-[11px] font-bold text-[#ffbd70]">• {{ session.status }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-    </AppLayout>
+      </section>
+    </div>
+  </AppLayout>
 </template>
